@@ -1,0 +1,29 @@
+Welcome to KB-Ai!
+
+Hello {{ full_name }},
+
+Welcome to {{ company_name }}! Your account has been successfully created.
+
+Your Account Credentials:
+=========================
+
+Username: {{ username }}
+Temporary Password: {{ password }}
+Email: {{ recipient_email }}
+
+IMPORTANT SECURITY NOTICE:
+Please change your password immediately after your first login for security reasons.
+
+NEXT STEPS:
+- Log in using the credentials above
+- Change your password to something secure and memorable
+- Complete your profile information
+- Explore the platform features
+
+If you have any questions or need assistance, please don't hesitate to contact our support team.
+
+Best regards,
+{{ from_name }}
+
+---
+This is an automated message. Please do not reply to this email.

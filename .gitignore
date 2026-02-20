@@ -1,0 +1,138 @@
+# =============================================================================
+# FLASK ENTERPRISE BACKEND TEMPLATE - GITIGNORE
+# =============================================================================
+
+# Environment Variables (NEVER COMMIT THESE!)
+.env
+.env.local
+.env.production
+.env.staging
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+.env/
+.env/
+env.bak/
+venv.bak/
+.venv/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS Generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+logs/
+*.log
+log/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Flask
+instance/
+.webassets-cache
+
+# Deployment Scripts (keep examples, ignore real ones)
+scripts/.env
+scripts/real_deploy.sh
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Documentation builds
+docs/_build/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
+
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# TODO: PROJECT_SPECIFIC - Add project-specific ignore patterns here
+# uploads/
+# static/user_content/
+# certificates/
+
+/.env
+/.env
+/SQL/
+/CLAUDE.md
+/README.md
+/knowledgebase/
+myenv

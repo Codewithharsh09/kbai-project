@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Health Check - KBAI Backend</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="health-container">
+        <div class="health-icon">❤️</div>
+        <h1 class="health-title">System Healthy</h1>
+        <p class="status-text">All systems operational</p>
+
+        <div class="info-grid">
+            <div class="info-item">
+                <div class="info-label">Status</div>
+                <div class="info-value">{{ status }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Environment</div>
+                <div class="info-value">{{ environment }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Version</div>
+                <div class="info-value">{{ version }}</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">Timestamp</div>
+                <div class="info-value" id="timestamp"></div>
+            </div>
+        </div>
+
+        <a href="/" class="back-btn">← Back to Home</a>
+    </div>
+
+    <script>
+        // Show current time
+        const now = new Date();
+        document.getElementById('timestamp').textContent = now.toLocaleTimeString();
+    </script>
+</body>
+</html>
+

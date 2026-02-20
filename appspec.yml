@@ -1,0 +1,11 @@
+version: 0.0
+os: linux
+files:
+  - source: /
+    destination: /var/www/serverbe
+hooks:
+  BeforeInstall:
+    - location: shscript/bf_script.sh
+  AfterInstall:
+    - location: shscript/ad_script.sh
+

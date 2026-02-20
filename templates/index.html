@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KBAI Backend - Enterprise API</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🚀 KBAI Backend</div>
+            <div class="subtitle">Enterprise-Grade Business Intelligence API</div>
+            <div>
+                <span class="badge success">
+                    <span class="status-indicator"></span>
+                    Status: Running
+                </span>
+                <span class="badge info">Environment: {{ env }}</span>
+                <span class="badge info">Version: {{ version }}</span>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">🔐</div>
+                    <div class="feature-title">Auth0 Integration</div>
+                    <div class="feature-desc">Secure authentication with Auth0, JWT tokens, and role-based access control</div>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🏢</div>
+                    <div class="feature-title">Company Management</div>
+                    <div class="feature-desc">Complete CRUD operations for companies, sectors, and geographical zones</div>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <div class="feature-title">Business Analytics</div>
+                    <div class="feature-desc">KPI tracking, financial analysis, and predictive intelligence</div>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">👥</div>
+                    <div class="feature-title">User Management</div>
+                    <div class="feature-desc">Hierarchical user roles with admin, manager, and user permissions</div>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">📈</div>
+                    <div class="feature-title">Dashboard & Reports</div>
+                    <div class="feature-desc">Real-time dashboards, custom reports, and data export capabilities</div>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🔄</div>
+                    <div class="feature-title">RESTful API</div>
+                    <div class="feature-desc">Well-documented REST API with Swagger UI and comprehensive endpoints</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="actions">
+            <a href="/health" class="btn btn-primary">
+                ❤️ Health Check
+            </a>
+        </div>
+
+        <div class="footer">
+            <p><strong>KBAI Backend API</strong> - Enterprise Business Intelligence Platform</p>
+            <p style="margin-top: 10px;">Built with Flask, SQLAlchemy, PostgreSQL, and Auth0</p>
+            <p style="margin-top: 10px; color: #ccc;">© 2025 Sinaptica40. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+

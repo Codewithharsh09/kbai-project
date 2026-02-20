@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to KB-Ai</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            line-height: 1.6; 
+            color: #333; 
+            margin: 0; 
+            padding: 0; 
+            background-color: #f4f4f4;
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 20px auto; 
+            padding: 20px; 
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 20px; 
+            border-radius: 8px; 
+            margin-bottom: 30px; 
+            text-align: center;
+        }
+        .header h2 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 300;
+        }
+        .credentials-box { 
+            background: #f8f9fa;
+            border-left: 4px solid #28a745;
+            padding: 20px; 
+            border-radius: 5px; 
+            margin: 25px 0; 
+        }
+        .credential-item {
+            background: #ffffff;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+        .credential-label {
+            font-weight: bold;
+            color: #495057;
+            margin-bottom: 5px;
+        }
+        .credential-value {
+            font-family: 'Courier New', monospace;
+            background: #e9ecef;
+            padding: 8px 12px;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        .warning { 
+            background: #fff3cd; 
+            border-left: 4px solid #ffc107;
+            padding: 20px; 
+            border-radius: 5px; 
+            margin: 25px 0; 
+        }
+        .footer { 
+            margin-top: 40px; 
+            padding-top: 20px; 
+            border-top: 1px solid #eee; 
+            font-size: 14px; 
+            color: #666; 
+            text-align: center;
+        }
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #007bff;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 5px;
+        }
+        ul {
+            padding-left: 20px;
+        }
+        li {
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>🎉 Welcome to KB-Ai!</h2>
+        </div>
+        
+        <p>Hello <strong>{{ full_name }}</strong>,</p>
+        
+        <p>Welcome to {{ company_name }}! Your account has been successfully created. Below are your login credentials:</p>
+        
+        <div class="credentials-box">
+            <h3 style="margin-top: 0; color: #28a745;">Your Account Credentials:</h3>
+            
+            <div class="credential-item">
+                <div class="credential-label">Username:</div>
+                <div class="credential-value">{{ username }}</div>
+            </div>
+            
+            <div class="credential-item">
+                <div class="credential-label">Temporary Password:</div>
+                <div class="credential-value">{{ password }}</div>
+            </div>
+            
+            <div class="credential-item">
+                <div class="credential-label">Email:</div>
+                <div class="credential-value">{{ recipient_email }}</div>
+            </div>
+        </div>
+        
+        <div class="warning">
+            <strong>🔒 Important Security Notice:</strong><br>
+            Please change your password immediately after your first login for security reasons.
+        </div>
+        
+        <div class="info-box">
+            <strong>📋 Next Steps:</strong>
+            <ul>
+                <li>Log in using the credentials above</li>
+                <li>Change your password to something secure and memorable</li>
+                <li>Complete your profile information</li>
+                <li>Explore the platform features</li>
+            </ul>
+        </div>
+        
+        <p>If you have any questions or need assistance, please don't hesitate to contact our support team.</p>
+        
+        <div class="footer">
+            <p>Best regards,<br>
+            <strong>{{ from_name }}</strong></p>
+            
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+            
+            <p><small>This is an automated message. Please do not reply to this email.</small></p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,20 @@
+KB-Ai Notification
+
+Hello,
+
+NOTIFICATION: {{ notification_title }}
+
+{{ message }}
+
+NOTIFICATION DETAILS:
+- Type: {{ notification_type }}
+- Sent: {{ current_time }}
+- From: {{ from_name }}
+
+If you have any questions about this notification, please contact our support team.
+
+Best regards,
+{{ from_name }}
+
+---
+This is an automated message. Please do not reply to this email.
