@@ -29,8 +29,8 @@ class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-key-change-in-production'
 
     # Advanced Database Configuration with Connection Pooling
-    DATABASE_URL = os.environ.get('DATABASE_URL_DB')
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL_DB')
+    DATABASE_URL = os.environ.get('DATABASE_URL_DB') or os.environ.get('DATABASE_URL')
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL_DB') or os.environ.get('DATABASE_URL')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_RECORD_QUERIES = True
     
@@ -156,12 +156,16 @@ class Config:
     @staticmethod
     def validate_required_config():
         """Validate that all required configuration is present"""
-        required_vars = ['SECRET_KEY', 'DATABASE_URL_DB']
+        required_vars = ['SECRET_KEY']
         missing_vars = []
 
         for var in required_vars:
             if not os.environ.get(var):
                 missing_vars.append(var)
+        
+        # Special check for database URL (accept either DATABASE_URL_DB or DATABASE_URL)
+        if not os.environ.get('DATABASE_URL_DB') and not os.environ.get('DATABASE_URL'):
+            missing_vars.append('DATABASE_URL_DB or DATABASE_URL')
 
         if missing_vars:
             raise ValueError(
@@ -287,7 +291,7 @@ class ProductionConfig(Config):
 
         # Validate database URL exists
         if not Config.DATABASE_URL:
-            raise ValueError("Production requires DATABASE_URL_DB to be set!")
+            raise ValueError("Production requires DATABASE_URL_DB or DATABASE_URL to be set!")
 
         return True
 
