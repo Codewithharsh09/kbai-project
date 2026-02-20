@@ -58,9 +58,40 @@ create_benchmark_payload_model = benchmark_ns.model('CreateBenchmarkPayload', {
     )
 })
 
+# Payload for update a note for partiular benchmark report
+update_benchmark_payload_model = benchmark_ns.model('UpdateBenchmarkPayload', {
+    'note': fields.String(
+        required=True,
+        description='New note content for the benchmark report',
+        example='This is an updated note for the benchmark report.'
+    ),
+    'name': fields.String(
+        required=False,
+        description='name for the benchmark report',
+        example='Kpi Name'
+    )
+})
+
 # =============================================================================
 # RESPONSE MODELS
 # =============================================================================
+
+# Add Competitor Comparison Response Model
+add_competitor_comparison_response_model = benchmark_ns.model('AddCompetitorComparisonResponse', {
+    'message': fields.String(
+        description='Response message',
+        example='Competitor comparison report created successfully'
+    ),
+    'data': fields.Raw(
+        description='Created competitor comparison data',
+        example={}
+    ),
+    'success': fields.Boolean(
+        description='Operation success status for competitor comparison',
+        example=True
+    )
+})
+
 
 # Single Benchmark Response Model
 benchmark_create_response_model = benchmark_ns.model('BenchmarkCreateResponse', {
@@ -77,7 +108,23 @@ benchmark_create_response_model = benchmark_ns.model('BenchmarkCreateResponse', 
         example=True
     )
 })
-# ...existing code...
+
+# Update Benchmark Response Model
+benchmark_update_response_model = benchmark_ns.model('BenchmarkUpdateResponse', {
+     'success': fields.Boolean(
+        description='Operation success status for benchmark',
+        example=True
+    ),
+    'message': fields.String(
+        description='Response message',
+        example='Benchmark KPI note updated successfully'
+    ),
+    'data': fields.Raw(
+        description='updated benchmark data',
+        example={}
+    )
+})
+
 
 # List Response Model for Benchmarks
 benchmarks_list_response = benchmark_ns.model('BenchmarksYearListResponse', {
@@ -158,6 +205,73 @@ benchmarks_report_list_response = benchmark_ns.model('BenchmarksReportrListRespo
 })
 
 
+# List Response Model for Competitor Reports
+competitor_reports_response_model = benchmark_ns.model('CompetitorReportsResponse', {
+    'success': fields.Boolean(
+        description='Operation success status',
+        example=True
+    ),
+    'message': fields.String(
+        description='Response message',
+        example='Competitor Benchmark Reports fetched successfully'
+    ),
+    'data': fields.Raw(
+        description='Competitor reports data',
+        example={
+                "parent_id_report": 106,
+                "parent_analysis_id": 116,
+                "parent_name": "testing6",
+                "time": "2026-01-19T10:20:03.149354",
+                "benchmarks": {
+                    "competitor": {
+                        "file": "provisional 2020 ",
+                        "kpis": {"EBITDA": 10.0,"EBIT_Reddito_Operativo": 10.0,"MOL_RICAVI_%": 10.0,"EBITDA_Margin_%": 10.0,"Margine_Contribuzione_%": 10.0,"Patrimonio_Netto": 10.0,"Mark_Up": 10.0,"Fatturato_Equilibrio_BEP": 10.0,"Spese_Generali_Ratio": 10.0,"Ricavi_Totali": 10.0,"Costi_Variabili": 10.0},
+                        "year": 2020
+                    }
+                },
+                "kpi_statuses": {
+                    "EBITDA": {
+                        "status": "ALARMING",
+                        "note": "Average",
+                        "goal": 70.0,
+                        "synthesis": "The company recorded a increase of +3.0% compared to 2020. Compared to the previous fiscal year, the value shows a decrease of 4.5%",
+                        "suggestion": [
+                            'Immediate restructuring required to restore profitability.'
+                        ]
+                    }
+                }
+            }
+    )
+    }
+)
+# Suggested Competitors Response Model
+suggested_competitors_response_model = benchmark_ns.model('SuggestedCompetitorsResponse', {
+    'success': fields.Boolean(
+        description='Operation success status',
+        example=True
+    ),
+    'message': fields.String(
+        description='Response message',
+        example='Competitor companies retrieved successfully'
+    ),
+    'data': fields.List(
+        fields.Raw(
+            description='Suggested competitor with nested balances',
+            example={
+                "id_company": 1,
+                "company_name": "Competitor S.r.l.",
+                "balances": [
+                    {
+                        "id_balance": 10,
+                        "year": 2024,
+                        "type": "final",
+                        "file": "Balance_2024.pdf"
+                    }
+                ]
+            }
+        )
+    )
+})
 # Benchmark Report Details Data Model
 benchmark_report_details_data_model = benchmark_ns.model('BenchmarkReportDetailsData', {
     'id_report': fields.Integer(
@@ -259,6 +373,16 @@ benchmark_list_item_model = benchmark_ns.model('BenchmarkListItem', {
         allow_none=True
     )
 })
+update_validation_error_model = benchmark_ns.model('NoteValidationError', {
+    'error': fields.String(
+        description='Error type',
+        example='Validation error'
+    ),
+    'message': fields.String(
+        description='Error message',
+        example='id_analysis and KPI name are required'
+    )
+})
 
 # List Response Model for Benchmarks
 benchmarks_list_response_model = benchmark_ns.model('BenchmarksListResponse', {
@@ -297,48 +421,71 @@ benchmarks_report_response_model = benchmark_ns.model('BenchmarksReportResponse'
     ),
     'data': fields.String(
         description='List of benchmarks',
-        example={
-            "benchmarks": {
-      "417": {
-        "EBITDA": -753537,
-        "EBIT_Reddito_Operativo": -639749,
-        "MOL_RICAVI_%": -880.14,
-        "EBITDA_Margin_%": -791.51,
-        "Margine_Contribuzione_%": -886.01,
-        "Patrimonio_Netto": 49271543,
-        "Mark_Up": -0.8986,
-        "Fatturato_Equilibrio_BEP": -45675.75,
-        "Spese_Generali_Ratio": 4.7268,
-        "Ricavi_Totali": 85616,
-        "Costi_Variabili": 844181
+        example={ 
+    "parent_id_report": 123,
+    "parent_analysis_id": 123,
+    "parent_name": "TestComp2-2020-2025-2026",
+    "time": "2025-12-23T12:22:14.936514",
+    "benchmarks": {
+      "balanceSheetToCompare": {
+        "file": "Provisional 2020 ",
+        "kpis": {
+          "EBITDA": -753537,
+          "EBIT_Reddito_Operativo": -639749,
+          "MOL_RICAVI_%": -880.14,
+          "EBITDA_Margin_%": -791.51,
+          "Margine_Contribuzione_%": -886.01,
+          "Patrimonio_Netto": 49271543,
+          "Mark_Up": -0.8986,
+          "Fatturato_Equilibrio_BEP": -45675.75,
+          "Spese_Generali_Ratio": 4.7268,
+          "Ricavi_Totali": 85616,
+          "Costi_Variabili": 844181
+        },
+        "year": 2020
       },
-      "418": {
-        "Ricavi_Totali": 83495,
-        "EBITDA": -755658,
-        "EBIT_Reddito_Operativo": -641870,
-        "MOL_RICAVI_%": -905.03,
-        "EBITDA_Margin_%": -811.83,
-        "Margine_Contribuzione_%": -911.06,
-        "Patrimonio_Netto": 48934346,
-        "Mark_Up": -0.9011,
-        "Fatturato_Equilibrio_BEP": -44420,
-        "Spese_Generali_Ratio": 4.8469,
-        "Costi_Variabili": 844181
+      "comparitiveBalancesheet": {
+        "file": "final 2026 dicembre",
+        "kpis": {},
+        "year": 2026
       },
-      "419": {
-        "EBITDA": 44748968,
-        "EBIT_Reddito_Operativo": 45332968,
-        "MOL_RICAVI_%": 98.33,
-        "EBITDA_Margin_%": 98.09,
-        "Margine_Contribuzione_%": 98.09,
-        "Patrimonio_Netto": 82100884,
-        "Mark_Up": 51.3246,
-        "Fatturato_Equilibrio_BEP": 377410.88,
-        "Spese_Generali_Ratio": 0.0081,
-        "Costi_Variabili": 869778
+      "referenceBalanceSheet": {
+        "file": "forecast 2025 ",
+        "kpis": {},
+        "year": 2025
       }
-    }
-  } 
+    },
+    "kpi_statuses": {
+      "EBITDA": {
+        "status": "ALARMING",
+        "note": "Average",
+        "goal": 70.0,
+        "synthesis": "The company recorded a increase of +3.0% compared to 2020. Compared to the previous fiscal year, the value shows a decrease of 4.5%",
+        "suggestion": [
+          "Immediate restructuring required to restore profitability."
+        ]
+      },
+      "EBIT_Reddito_Operativo": {
+        "status": "AVERAGE",
+        "note": "Average",
+        "goal": 10.0,
+        "synthesis": "The company recorded a increase of +6.0% compared to 2020. Compared to the previous fiscal year, the value shows a decrease of 3.4%",
+        "suggestion": [
+          "Monitor this KPI regularly and take corrective actions if required."
+        ]
+      },
+    },
+    "competitor_reports": [
+        {
+            "competitor_id_report": 83,
+            "comparison_name": "testing4",
+            "type": "Diretto",
+            "competitor_name": "lotobola",
+            "balance_name": "provisional 2026 ",
+            "time": "2026-01-15T09:27:28.477819"
+        }
+    ]
+} 
     )
 })
 
@@ -357,6 +504,18 @@ validation_error_model = benchmark_ns.model('ValidationError', {
         example='Year is required and must be an integer'
     )
 })
+
+validation_error_getbenchmark_model = benchmark_ns.model('ValidationErrorBenchmark', {
+    'error': fields.String(
+        description='Error type',
+        example='Validation error'
+    ),
+    'message': fields.String(
+        description='Error message',
+        example='Report ID is required'
+    )
+})
+
 
 internal_error_model = benchmark_ns.model('InternalError', {
     'error': fields.String(
@@ -380,6 +539,29 @@ not_found_error_model = benchmark_ns.model('NotFoundError', {
     )
 })
 
+
+not_found_error_getBenchmark_model = benchmark_ns.model('NotFoundErrorGetBenchmark', {
+    'error': fields.String(
+        description='Error type',
+        example='Not found'
+    ),
+    'message': fields.String(
+        description='Error message',
+        example='Report not found'
+    )
+})
+
+note_not_found_error_model = benchmark_ns.model('NoteNotFoundError', {
+    'error': fields.String(
+        description='Error type',
+        example='Not found'
+    ),
+    'message': fields.String(
+        description='Error message',
+        example='Analysis not found'
+    )
+})
+
 # =============================================================================
 # EXPORT ALL MODELS
 # =============================================================================
@@ -389,14 +571,22 @@ __all__ = [
     'balance_sheet_model',
     'create_benchmark_payload_model',
     'benchmark_create_response_model',
+    'add_competitor_comparison_response_model',
     'benchmarks_list_response',
     'benchmarks_report_list_response',
+    'competitor_reports_response_model',
     'benchmark_report_details_data_model',
     'benchmark_report_details_response',
     'validation_error_model',
     'internal_error_model',
     'not_found_error_model',
     'benchmark_list_item_model',
-    'benchmark_delete_response_model'
+    'benchmark_delete_response_model',
+    'update_benchmark_payload_model',
+    'update_validation_error_model',
+    'note_not_found_error_model',
+    'validation_error_getbenchmark_model',
+    'not_found_error_getBenchmark_model',
+    'suggested_competitors_response_model'
 ]
 

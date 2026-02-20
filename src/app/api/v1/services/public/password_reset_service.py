@@ -15,6 +15,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.extensions import db
 from src.app.database.models import TbOtp, TbUser
 from ..common.email import EmailService
+from flask import request
+from src.common.localization import get_message
 
 
 class PasswordResetService:
@@ -42,9 +44,10 @@ class PasswordResetService:
         try:
             # Check rate limiting
             rate_limit_check = self._check_rate_limits(email, ip_address)
+            locale = request.headers.get('Accept-Language', 'en')
             if not rate_limit_check['allowed']:
                 return {
-                    'error': 'Rate limit exceeded',
+                    'error': get_message('rate_limit_exceeded', locale),
                     'message': rate_limit_check['message'],
                     'retry_after': rate_limit_check['retry_after']
                 }, 429
@@ -54,7 +57,7 @@ class PasswordResetService:
             
             # Always return success message (security best practice)
             # Don't reveal whether email exists or not
-            response_message = "If this email is registered, you will receive a reset link."
+            response_message = get_message('password_reset_request_success', locale)
             
             # Only proceed if user exists
             if not user:
@@ -105,16 +108,18 @@ class PasswordResetService:
         except SQLAlchemyError as e:
             db.session.rollback()
             current_app.logger.error(f"Database error in password reset request: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
-                'error': 'Database error',
-                'message': 'Please try again later'
+                'error': get_message('database_error', locale),
+                'message': get_message('generic_error_message', locale)
             }, 500
             
         except Exception as e:
             current_app.logger.error(f"Password reset request error: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
-                'error': 'Password reset request failed',
-                'message': 'Please try again later'
+                'error': get_message('password_reset_request_failed', locale),
+                'message': get_message('generic_error_message', locale)
             }, 500
     
     def verify_reset_token(self, token: str) -> Tuple[Dict[str, Any], int]:
@@ -132,11 +137,12 @@ class PasswordResetService:
             
             # Find the reset record
             reset_record = TbOtp.get_valid_token(token_hash)
+            locale = request.headers.get('Accept-Language', 'en')
             
             if not reset_record:
                 return {
-                    'error': 'Invalid reset token',
-                    'message': 'The reset link is invalid or has expired'
+                    'error': get_message('invalid_reset_token', locale),
+                    'message': get_message('token_invalid_expired', locale)
                 }, 400
             
             # Check if token is valid
@@ -157,12 +163,12 @@ class PasswordResetService:
             
             if not user:
                 return {
-                    'error': 'User not found',
-                    'message': 'The user account is not found or inactive'
+                    'error': get_message('user_not_found', locale),
+                    'message': get_message('user_not_found_inactive', locale)
                 }, 404
             
             return {
-                'message': 'Token is valid',
+                'message': get_message('token_valid', locale),
                 'user': {
                     'id_user': user.id_user,
                     'email': user.email,
@@ -174,9 +180,10 @@ class PasswordResetService:
             
         except Exception as e:
             current_app.logger.error(f"Token verification error: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
-                'error': 'Token verification failed',
-                'message': 'Please try again later'
+                'error': get_message('token_verification_failed', locale),
+                'message': get_message('generic_error_message', locale)
             }, 500
     
     def reset_password(self, token: str, new_password: str) -> Tuple[Dict[str, Any], int]:
@@ -198,23 +205,25 @@ class PasswordResetService:
                 token_hash=token_hash
             ).first()
             
+            locale = request.headers.get('Accept-Language', 'en')
+
             if not reset_record:
                 return {
-                    'error': 'Invalid reset token',
-                    'message': 'The reset link is invalid or has expired'
+                    'error': get_message('invalid_reset_token', locale),
+                    'message': get_message('token_invalid_expired', locale)
                 }, 400
             
             # Check if token is valid
             if not reset_record.is_valid():
                 if reset_record.is_expired():
                     return {
-                        'error': 'Token expired',
-                        'message': 'The reset link has expired. Please request a new one.'
+                        'error': get_message('token_expired', locale),
+                        'message': get_message('token_expired_message', locale)
                     }, 400
                 elif reset_record.is_used:
                     return {
-                        'error': 'Token already used',
-                        'message': 'This reset link has already been used. Please request a new one.'
+                        'error': get_message('token_already_used', locale),
+                        'message': get_message('token_already_used_message', locale)
                     }, 400
             
             # Get user from reset record
@@ -222,15 +231,15 @@ class PasswordResetService:
             
             if not user:
                 return {
-                    'error': 'User not found',
-                    'message': 'The user account is not found or inactive'
+                    'error': get_message('user_not_found', locale),
+                    'message': get_message('user_not_found_inactive', locale)
                 }, 404
             
             # Check if user has Auth0 user ID
             if not user.auth0_user_id:
                 return {
-                    'error': 'Auth0 user not found',
-                    'message': 'User account is not properly configured with Auth0'
+                    'error': get_message('auth0_user_not_found', locale),
+                    'message': get_message('user_auth0_config_error', locale)
                 }, 400
             
             # Reset password in Auth0 using Management API
@@ -244,8 +253,8 @@ class PasswordResetService:
             if auth0_result.get('error'):
                 current_app.logger.error(f"Auth0 password reset failed for user {user.email}: {auth0_result.get('message')}")
                 return {
-                    'error': 'Password reset failed',
-                    'message': auth0_result.get('message', 'Failed to reset password in Auth0')
+                    'error': get_message('password_reset_failed', locale),
+                    'message': auth0_result.get('localized_message') or auth0_result.get('message', get_message('auth0_reset_failed', locale))
                 }, 400
             
             # Mark token as used
@@ -260,23 +269,25 @@ class PasswordResetService:
             current_app.logger.info(f"Password reset completed for user: {user.email} via Auth0")
             
             return {
-                'message': 'Password reset successfully. Please log in with your new password.',
+                'message': get_message('password_reset_success_login', locale),
                 'success': True
             }, 200
             
         except SQLAlchemyError as e:
             db.session.rollback()
             current_app.logger.error(f"Database error in password reset: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
-                'error': 'Database error',
-                'message': 'Please try again later'
+                'error': get_message('database_error', locale),
+                'message': get_message('generic_error_message', locale)
             }, 500
             
         except Exception as e:
             current_app.logger.error(f"Password reset error: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
-                'error': 'Password reset failed',
-                'message': 'Please try again later'
+                'error': get_message('password_reset_failed', locale),
+                'message': get_message('generic_error_message', locale)
             }, 500
     
     def _check_rate_limits(self, email: str, ip_address: str = None) -> Dict[str, Any]:
@@ -293,9 +304,10 @@ class PasswordResetService:
             ).count()
             
             if email_attempts >= self.max_attempts_per_hour:
+                locale = request.headers.get('Accept-Language', 'en')
                 return {
                     'allowed': False,
-                    'message': f'Too many reset requests for this email. Please wait before trying again.',
+                    'message': get_message('rate_limit_exceeded_message', locale),
                     'retry_after': 3600  # 1 hour
                 }
             

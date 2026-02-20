@@ -32,6 +32,7 @@ def create_schemas():
             db.session.execute(text("CREATE SCHEMA IF NOT EXISTS kbai"))
             db.session.execute(text("CREATE SCHEMA IF NOT EXISTS kbai_balance"))
             db.session.execute(text("CREATE SCHEMA IF NOT EXISTS public "))
+            db.session.execute(text("CREATE SCHEMA IF NOT EXISTS kbai_employee"))
             db.session.commit()
             print("✅ Schemas created successfully!")
             print("   • kbai schema created")

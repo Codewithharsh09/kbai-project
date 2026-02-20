@@ -22,6 +22,7 @@ class KbaiReport(Base):
     time = Column(DateTime, default=datetime.utcnow, nullable=False)
     file_path = Column(Text)
     export_format = Column(String(100))
+    parent_report_id = Column(BigInteger, ForeignKey('kbai_balance.kbai_reports.id_report'), nullable=True)
     # created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     # updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     # is_deleted = Column(String(1), default='N', nullable=False)
@@ -40,6 +41,7 @@ class KbaiReport(Base):
             'time': self.time.isoformat() if self.time else None,
             'file_path': self.file_path,
             'export_format': self.export_format,
+            'parent_report_id': self.parent_report_id,
             # 'created_at': self.created_at.isoformat() if self.created_at else None,
             # 'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             # 'is_deleted': self.is_deleted,

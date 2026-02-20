@@ -15,8 +15,9 @@ class KpiLogic(Base):
     __table_args__ = {'schema': 'kbai_balance'}
 
     id_kpi = Column(BigInteger, ForeignKey('kbai_balance.kbai_kpi_values.id_kpi'), primary_key=True)
-    critical_percentage = Column(Numeric(3, 2))
-    acceptable_percentage = Column(Numeric(3, 2))
+    # Use generic NUMERIC without precision/scale so large percentages can be stored
+    critical_percentage = Column(Numeric)
+    acceptable_percentage = Column(Numeric)
     # created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     # updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     # is_deleted = Column(String(1), default='N', nullable=False)

@@ -96,6 +96,12 @@ from .kbai.pre_dashboard_tab import (
     EXAMPLE_PRE_DASHBOARD_COMPLETED
 )
 
+from .kbai.company_import_tab import (
+    company_import_ns,
+    import_company_request_model,
+    import_company_response_model
+)
+
 from .k_balance.balance_sheet_tab import (
     balance_sheet_ns,
     upload_parser,
@@ -124,7 +130,9 @@ from .k_balance.benchmark_tab import (
     benchmark_ns,
     create_benchmark_payload_model,
     benchmark_create_response_model,
+    add_competitor_comparison_response_model,
     benchmarks_list_response_model,
+    competitor_reports_response_model,
     validation_error_model,
     internal_error_model,
     benchmark_list_item_model,
@@ -132,7 +140,14 @@ from .k_balance.benchmark_tab import (
     benchmarks_list_response,
     benchmarks_report_list_response,
     benchmarks_report_response_model,
-    benchmark_delete_response_model
+    benchmark_delete_response_model,
+    benchmark_update_response_model,
+    update_benchmark_payload_model,
+    update_validation_error_model,
+    note_not_found_error_model,
+    validation_error_getbenchmark_model,
+    not_found_error_getBenchmark_model,
+    suggested_competitors_response_model
 )
 __all__ = [
     # Namespaces
@@ -208,10 +223,23 @@ __all__ = [
     # Benchmark Models
     'create_benchmark_payload_model',
     'benchmark_create_response_model',
+    'add_competitor_comparison_response_model',
     'benchmarks_report_response_model',
+    'competitor_reports_response_model',
     'benchmark_list_item_model',
     'benchmarks_list_response',
-    'benchmark_delete_response_model'
+    'benchmark_delete_response_model',
+    'update_benchmark_payload_model',
+    'update_validation_error_model',
+    'note_not_found_error_model',
+    'validation_error_getbenchmark_model',
+    'not_found_error_getBenchmark_model',
+    'suggested_competitors_response_model',
+    
+    # Company Import
+    'company_import_ns',
+    'import_company_request_model',
+    'import_company_response_model',
     
     # Validation Rules
     'PASSWORD_RULES',

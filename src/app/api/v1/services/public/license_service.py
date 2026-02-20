@@ -9,6 +9,11 @@ from src.app.database.models.public.tb_licences import TbLicences
 from src.app.database.models.kbai.kbai_companies import KbaiCompany
 from src.app.database.models.public.tb_user import TbUser
 from typing import Dict, Tuple, List, Optional
+from src.app.database.models.public.tb_licences import TbLicences
+from datetime import date, datetime
+import uuid
+from flask import request
+from src.common.localization import get_message
 
 
 class LicenseManager:
@@ -69,12 +74,13 @@ class LicenseManager:
             }
             
         except Exception as e:
+            locale = request.headers.get('Accept-Language', 'en')
             return {
                 'total_licenses': 0,
                 'used_by_companies': 0,
                 'available': 0,
                 'can_transfer': 0,
-                'reserved_reason': f"Error calculating stats: {str(e)}",
+                'reserved_reason': get_message('error_calculating_stats', locale, error=str(e)),
                 'has_company': False,
                 'error': str(e)
             }
@@ -92,21 +98,22 @@ class LicenseManager:
             Tuple of (is_valid, error_message, stats_dict)
         """
         stats = LicenseManager.calculate_license_stats(creator_id)
+        locale = request.headers.get('Accept-Language', 'en')
         
         # Check if there's an error in stats calculation
         if 'error' in stats:
-            return False, f"Unable to validate licenses: {stats['error']}", stats
+            return False, get_message('unable_validate_licenses', locale, error=stats['error']), stats
         
         # Check if user has any licenses at all
         if stats['total_licenses'] == 0:
-            return False, "You don't have any licenses to allocate", stats
+            return False, get_message('no_licenses_to_allocate', locale), stats
         
         # Check if requested licenses exceed what can be transferred
         if requested_licenses > stats['can_transfer']:
             if stats['reserved_reason']:
-                error_msg = f"Cannot allocate {requested_licenses} licenses. {stats['reserved_reason']}. You can transfer maximum {stats['can_transfer']} licenses."
+                error_msg = get_message('allocate_reserved_limit', locale, requested=requested_licenses, reason=stats['reserved_reason'], max=stats['can_transfer'])
             else:
-                error_msg = f"Cannot allocate {requested_licenses} licenses. Only {stats['can_transfer']} licenses available to transfer."
+                error_msg = get_message('allocate_transfer_limit', locale, requested=requested_licenses, max=stats['can_transfer'])
             
             return False, error_msg, stats
         
@@ -125,24 +132,40 @@ class LicenseManager:
             Tuple of (is_valid, error_message, stats_dict)
         """
         stats = LicenseManager.calculate_license_stats(creator_id)
+        locale = request.headers.get('Accept-Language', 'en')
         
         # Check if there's an error in stats calculation
         if 'error' in stats:
-            return False, f"Unable to validate licenses: {stats['error']}", stats
+            return False, get_message('unable_validate_licenses', locale, error=stats['error']), stats
         
         # Check if user has any available licenses
         if stats['available'] == 0:
-            error_msg = "No licenses available to create a company. "
+            error_msg = get_message('no_licenses_create_company', locale)
             if stats['total_licenses'] == 0:
-                error_msg += "You don't have any licenses."
+                error_msg += get_message('no_licenses_owned', locale)
             else:
-                error_msg += f"All {stats['total_licenses']} licenses are in use."
+                error_msg += get_message('all_licenses_in_use', locale, count=stats['total_licenses'])
             
             return False, error_msg, stats
         
         # Validation passed
         return True, None, stats
     
+    @staticmethod
+    def create_competitor_licence():
+
+        licence = TbLicences(
+            licence_token=f"COMP-{uuid.uuid4().hex[:16]}",
+            expiry_date=date(2099, 12, 31),
+            type='COMPETITOR',
+            time=datetime.utcnow()
+        )
+
+        db.session.add(licence)
+        db.session.flush()  # IMPORTANT: get id without commit
+
+        return licence.id_licence
+
     @staticmethod
     def get_available_licenses_for_transfer(user_id: int, count: int) -> Tuple[Optional[List[Dict]], Optional[str]]:
         """
@@ -157,6 +180,7 @@ class LicenseManager:
             license_list contains dicts with id_licence and licence_code
         """
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # Get all license IDs owned by user
             user_licenses = db.session.query(
                 LicenceAdmin.id_licence,
@@ -164,7 +188,7 @@ class LicenseManager:
             ).filter(LicenceAdmin.id_user == user_id).all()
             
             if not user_licenses:
-                return None, "No licenses found for user"
+                return None, get_message('no_licenses_found_user', locale)
             
             user_license_ids = [lic[0] for lic in user_licenses]
             
@@ -188,13 +212,14 @@ class LicenseManager:
             
             # Check if we have enough available licenses
             if len(available_licenses) < count:
-                return None, f"Only {len(available_licenses)} licenses available, but {count} requested"
+                return None, get_message('insufficient_licenses_available', locale, available=len(available_licenses), requested=count)
             
             # Return requested number of licenses
             return available_licenses[:count], None
             
         except Exception as e:
-            return None, f"Error retrieving licenses: {str(e)}"
+            locale = request.headers.get('Accept-Language', 'en')
+            return None, get_message('error_retrieving_licenses', locale, error=str(e))
     
     @staticmethod
     def transfer_licenses(from_user_id: int, to_user_id: int, count: int) -> Tuple[bool, Optional[str], Optional[List[str]]]:
@@ -246,7 +271,8 @@ class LicenseManager:
             
         except Exception as e:
             db.session.rollback()
-            return False, f"Error transferring licenses: {str(e)}", None
+            locale = request.headers.get('Accept-Language', 'en')
+            return False, get_message('error_transferring_licenses', locale, error=str(e)), None
     
     @staticmethod
     def get_license_hierarchy(user_id: int, depth: int = 2) -> Dict:
@@ -407,11 +433,8 @@ class LicenseManager:
                 unused_licenses_count = current_license_count - companies_count
                 
                 if unused_licenses_count < licenses_to_remove:
-                    return False, (
-                        f'Cannot decrease licenses by {licenses_to_remove}. '
-                        f'User has {current_license_count} total licenses, but {companies_count} are used by companies. '
-                        f'Only {unused_licenses_count} unused licenses available to remove.'
-                    ), None
+                    locale = request.headers.get('Accept-Language', 'en')
+                    return False, get_message('cannot_decrease_licenses_used', locale, amount=licenses_to_remove, total=current_license_count, used=companies_count, unused=unused_licenses_count), None
                 
                 # Get available (unused) licenses to remove
                 available_licenses, error = LicenseManager.get_available_licenses_for_transfer(
@@ -420,7 +443,8 @@ class LicenseManager:
                 )
                 
                 if error:
-                    return False, f'Unable to remove {licenses_to_remove} licenses. {error}', None
+                    locale = request.headers.get('Accept-Language', 'en')
+                    return False, get_message('unable_remove_licenses', locale, amount=licenses_to_remove, error=error), None
                 
                 # Determine action based on WHO is updating and target admin's parent
                 current_user_role = current_user.role.lower()
@@ -434,7 +458,8 @@ class LicenseManager:
                     parent_admin = TbUser.query.filter_by(id_user=parent_admin_id).first()
                     
                     if not parent_admin:
-                        return False, 'Parent admin not found', None
+                        locale = request.headers.get('Accept-Language', 'en')
+                        return False, get_message('parent_admin_not_found', locale), None
                     
                     parent_role = parent_admin.role.lower()
                     
@@ -584,7 +609,8 @@ class LicenseManager:
                         parent_admin = TbUser.query.filter_by(id_user=parent_admin_id).first()
                         
                         if not parent_admin:
-                            return False, 'Parent admin not found', None
+                            locale = request.headers.get('Accept-Language', 'en')
+                            return False, get_message('parent_admin_not_found', locale), None
                         
                         parent_role = parent_admin.role.lower()
                         
@@ -645,7 +671,8 @@ class LicenseManager:
                             )
                             
                             if not is_valid:
-                                return False, f'Parent admin does not have enough licenses. {error_msg}', None
+                                locale = request.headers.get('Accept-Language', 'en')
+                                return False, get_message('parent_not_enough_licenses', locale, error=error_msg), None
                             
                             # Transfer licenses from parent to target admin
                             success, error, transferred_codes = LicenseManager.transfer_licenses(
@@ -758,10 +785,12 @@ class LicenseManager:
                 # Other roles cannot update admin licenses
                 # -------------------------------------------------------------
                 else:
-                    return False, f'Role "{current_user_role}" cannot update admin licenses', None
+                    locale = request.headers.get('Accept-Language', 'en')
+                    return False, get_message('role_cannot_update_licenses', locale, role=current_user_role), None
         
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"License update error: {str(e)}")
-            return False, f'Error updating licenses: {str(e)}', None
+            locale = request.headers.get('Accept-Language', 'en')
+            return False, get_message('error_updating_licenses', locale, error=str(e)), None
 

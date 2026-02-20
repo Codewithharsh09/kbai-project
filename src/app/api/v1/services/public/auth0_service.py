@@ -21,7 +21,9 @@ from flask import request, jsonify, current_app
 from jose import jwt, JWTError
 from src.app.database.models import TbUser
 from src.app.database.models.public.tb_user import UserTempData
+from src.app.database.models.public.tb_user import UserTempData
 from src.extensions import db
+from src.common.localization import get_message
 
 
 class Auth0Service:
@@ -305,10 +307,12 @@ class Auth0Service:
             
         except requests.exceptions.RequestException as e:
             current_app.logger.error(f"Auth0 request failed: {str(e)}")
-            raise ValueError(f"Auth0 request failed: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
+            raise ValueError(f"{get_message('auth0_request_failed', locale)}: {str(e)}")
         except Exception as e:
             current_app.logger.error(f"Password authentication error: {str(e)}")
-            raise ValueError(f"Authentication failed: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
+            raise ValueError(f"{get_message('auth0_user_authentication_failed', locale)}: {str(e)}")
 
     # -------------------------------------------------------------------------------------------
     # Verify Auth0 token using JWKS (supports both ID token and Access token)
@@ -555,7 +559,7 @@ class Auth0Service:
                 current_app.logger.warning(f"No temp data found for email: {email} - User likely created directly in Auth0")
                 phone = None
                 company_name = None
-                language = language or 'en'
+                language = 'en'
                 id_admin = None
                 premium1 = None
                 premium2 = None
@@ -587,7 +591,11 @@ class Auth0Service:
                 },
                 password=None  # Password managed by Auth0
             )
-
+            delete_temp_data = UserTempData.query.filter_by(email=email).delete()
+            if delete_temp_data:
+                current_app.logger.info(f"Deleted temp data for email: {email}")
+            else:
+                current_app.logger.warning(f"No temp data found for email: {email}")
             current_app.logger.info(f"Adding user to database session")
             db.session.add(user)
             current_app.logger.info(f"Committing database session")
@@ -692,10 +700,12 @@ class Auth0Service:
             
         except requests.exceptions.RequestException as e:
             current_app.logger.error(f"Auth0 request failed: {str(e)}")
-            raise ValueError(f"Auth0 user creation failed: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
+            raise ValueError(f"{get_message('auth0_user_creation_failed', locale)}: {str(e)}")
         except Exception as e:
             current_app.logger.error(f"Auth0 user creation error: {str(e)}")
-            raise ValueError(f"User creation failed: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
+            raise ValueError(f"{get_message('auth0_user_creation_failed', locale)}: {str(e)}")
 
     def reset_password_auth0(self, user_id: str, new_password: str) -> dict:
         """
@@ -746,9 +756,11 @@ class Auth0Service:
                 
         except Exception as e:
             current_app.logger.error(f"Auth0 password reset error: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
                 'error': 'Password reset error',
-                'message': str(e)
+                'message': str(e),
+                'localized_message': get_message('password_reset_error', locale)
             }
 
     # --------------------------------------------------------------------------------
@@ -783,6 +795,54 @@ class Auth0Service:
             current_app.logger.error(f"Error getting Auth0 user role: {str(e)}")
             return 'USER'
 
+    def get_user_roles_from_auth0(self, auth0_user_id: str) -> list:
+        """
+        Fetch assigned roles for a user from Auth0 Management API.
+
+        This method fetches the ACTUAL roles assigned to a user in the Auth0 Dashboard
+        under User Management > Users > [User] > Roles tab.
+
+        This is different from get_auth0_user_role which fetches from app_metadata.
+
+        Args:
+            auth0_user_id: The Auth0 user ID (e.g., 'auth0|1234567890')
+
+        Returns:
+            list: List of role names assigned to the user, e.g., ['superadmin', 'user']
+                    Returns empty list if no roles found or on error.
+        """
+        try:
+            token = self._get_management_token()
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+            # Fetch roles assigned to this user
+            url = f"https://{self.domain}/api/v2/users/{auth0_user_id}/roles"
+            response = requests.get(url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                roles_data = response.json()
+                # Extract role names from the response
+                role_names = [
+                    role.get("name", "").lower()
+                    for role in roles_data
+                    if role.get("name")
+                ]
+                current_app.logger.info(
+                    f"Fetched Auth0 roles for user {auth0_user_id}: {role_names}"
+                )
+                return role_names
+            else:
+                current_app.logger.error(
+                    f"Failed to fetch user roles from Auth0: {response.status_code} - {response.text}"
+                )
+                return []
+
+        except Exception as e:
+            current_app.logger.error(f"Error fetching Auth0 user roles: {str(e)}")
+            return []
+        
     def generate_test_id_token(self, user_id: str, email: str, role: str = 'USER') -> str:
         """
         Generate a test ID token for newly created users.
@@ -909,22 +969,24 @@ def require_auth(f):
         
         # Get token from Authorization header
         auth_header = request.headers.get('Authorization')
+        locale = request.headers.get('Accept-Language', 'en')
+        
         if auth_header:
             try:
                 token = auth_header.split(' ')[1]  # Bearer <token>
             except IndexError:
-                return jsonify({'error': 'Invalid authorization header'}), 401
+                return jsonify({'error': get_message('auth_header_invalid', locale)}), 401
         
         if not token:
-            return jsonify({'error': 'Authorization token required'}), 401
+            return jsonify({'error': get_message('auth_token_required', locale)}), 401
         
         # Verify token and get user
         user = auth0_service.get_user_from_token(token)
         if not user:
-            return jsonify({'error': 'Invalid or expired token'}), 401
+            return jsonify({'error': get_message('auth_token_invalid_expired', locale)}), 401
         
         if user.status != 'ACTIVE':
-            return jsonify({'error': 'Account is not active'}), 403
+            return jsonify({'error': get_message('account_not_active', locale)}), 403
         
         # Add user to request context
         request.current_user = user
@@ -940,21 +1002,19 @@ def require_role(required_role):
         @wraps(f)
         def decorated_function(*args, **kwargs):
             if not hasattr(request, 'current_user'):
-                return jsonify({'error': 'Authentication required'}), 401
+                locale = request.headers.get('Accept-Language', 'en')
+                return jsonify({'error': get_message('authentication_required', locale)}), 401
             
             user = request.current_user
+            locale = request.headers.get('Accept-Language', 'en')
             
             if required_role == 'SUPER_ADMIN' and not user.is_super_admin():
-                return jsonify({'error': 'Super admin access required'}), 403
+                return jsonify({'error': get_message('super_admin_access_required', locale)}), 403
             
             if required_role == 'ADMIN' and not user.is_admin():
-                return jsonify({'error': 'Admin access required'}), 403
+                return jsonify({'error': get_message('admin_access_required', locale)}), 403
             
             return f(*args, **kwargs)
         
         return decorated_function
     return decorator
-
-
-
-

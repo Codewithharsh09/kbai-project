@@ -23,7 +23,7 @@ class KbaiKpiValue(Base):
     unit = Column(String(100))
     source = Column(String(255))
     time = Column(DateTime, default=datetime.utcnow, nullable=False)
-    deviation = Column(Numeric(3, 2))
+    deviation = Column(Numeric)
     severity = Column(String(50))
     ai_suggestions = Column(String(1000))
     # created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

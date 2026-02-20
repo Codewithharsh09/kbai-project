@@ -17,7 +17,9 @@ License: MIT
 """
 
 from flask import jsonify, request
-from src.extensions import db
+from werkzeug.exceptions import NotFound, MethodNotAllowed, InternalServerError
+from src.extensions import db, api
+from src.common.localization import get_message
 
 
 class APIError(Exception):
@@ -128,6 +130,42 @@ def register_error_handlers(app):
         app: Flask application instance
     """
     
+    # Register error handlers for Flask-RESTx API
+    # This is required because Flask-RESTx handles its own errors
+    
+    @api.errorhandler(NotFound)
+    def handle_api_not_found(error):
+        """Handle 404 Not Found errors for API"""
+        locale = request.headers.get('Accept-Language', 'en')
+        return {
+            'success': False,
+            'message': get_message('resource_not_found', locale),
+            'error_code': 'NOT_FOUND',
+            'status_code': 404
+        }, 404
+
+    @api.errorhandler(MethodNotAllowed)
+    def handle_api_method_not_allowed(error):
+        """Handle 405 Method Not Allowed errors for API"""
+        locale = request.headers.get('Accept-Language', 'en')
+        return {
+            'success': False,
+            'message': get_message('method_not_allowed', locale),
+            'error_code': 'METHOD_NOT_ALLOWED',
+            'status_code': 405
+        }, 405
+
+    @api.errorhandler(InternalServerError)
+    def handle_api_server_error(error):
+        """Handle 500 Internal Server Error for API"""
+        locale = request.headers.get('Accept-Language', 'en')
+        return {
+            'success': False,
+            'message': get_message('internal_server_error', locale),
+            'error_code': 'INTERNAL_SERVER_ERROR',
+            'status_code': 500
+        }, 500
+
     @app.errorhandler(APIError)
     def handle_api_error(error):
         """Handle custom API errors"""
@@ -196,9 +234,10 @@ def register_error_handlers(app):
     @app.errorhandler(404)
     def not_found(e):
         """Handle 404 Not Found errors"""
+        locale = request.headers.get('Accept-Language', 'en')
         return jsonify({
             'success': False,
-            'message': 'Resource not found',
+            'message': get_message('resource_not_found', locale),
             'error_code': 'NOT_FOUND',
             'status_code': 404
         }), 404
@@ -206,9 +245,10 @@ def register_error_handlers(app):
     @app.errorhandler(405)
     def method_not_allowed(e):
         """Handle 405 Method Not Allowed errors"""
+        locale = request.headers.get('Accept-Language', 'en')
         return jsonify({
             'success': False,
-            'message': 'Method not allowed',
+            'message': get_message('method_not_allowed', locale),
             'error_code': 'METHOD_NOT_ALLOWED',
             'status_code': 405
         }), 405
@@ -222,9 +262,10 @@ def register_error_handlers(app):
         except Exception:
             pass
             
+        locale = request.headers.get('Accept-Language', 'en')
         return jsonify({
             'success': False,
-            'message': 'Internal server error',
+            'message': get_message('internal_server_error', locale),
             'error_code': 'INTERNAL_SERVER_ERROR',
             'status_code': 500
         }), 500
@@ -250,9 +291,10 @@ def register_error_handlers(app):
                 'status_code': 500
             }), 500
         else:
+            locale = request.headers.get('Accept-Language', 'en')
             return jsonify({
                 'success': False,
-                'message': 'An unexpected error occurred',
+                'message': get_message('unexpected_error', locale),
                 'error_code': 'INTERNAL_SERVER_ERROR',
                 'status_code': 500
             }), 500

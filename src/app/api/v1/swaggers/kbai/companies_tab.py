@@ -15,8 +15,11 @@ from flask_restx import Namespace, fields
 kbai_companies_ns = Namespace('companies', description='KBAI Companies CRUD operations')
 
 # Company Models
+# Company Models
 create_company_model = kbai_companies_ns.model('CreateCompany', {
     'company_name': fields.String(required=True, description='Company name (license auto-selected from available licenses)'),
+    'region': fields.String(description='Region name (Required for manual creation)'),
+    'ateco': fields.String(description='ATECO code (Required for manual creation)'),
     'vat': fields.String(description='VAT number'),
     'fiscal_code': fields.String(description='Fiscal code'),
     'sdi': fields.String(description='SDI code'),
@@ -30,6 +33,8 @@ create_company_model = kbai_companies_ns.model('CreateCompany', {
 
 update_company_model = kbai_companies_ns.model('UpdateCompany', {
     'company_name': fields.String(description='Company name'),
+    'region': fields.String(description='Region name'),
+    'ateco': fields.String(description='ATECO code'),
     'vat': fields.String(description='VAT number'),
     'fiscal_code': fields.String(description='Fiscal code'),
     'sdi': fields.String(description='SDI code'),
@@ -46,6 +51,8 @@ company_model = kbai_companies_ns.model('Company', {
     'id_company': fields.Integer(description='Company ID'),
     'id_licence': fields.Integer(description='Licence ID'),
     'company_name': fields.String(description='Company name'),
+    'region': fields.String(description='Region name'),
+    'ateco': fields.String(description='ATECO code'),
     'vat': fields.String(description='VAT number'),
     'fiscal_code': fields.String(description='Fiscal code'),
     'sdi': fields.String(description='SDI code'),
@@ -54,6 +61,7 @@ company_model = kbai_companies_ns.model('Company', {
     'phone': fields.String(description='Phone number'),
     'email': fields.String(description='Email address'),
     'website': fields.String(description='Website URL'),
+    'is_competitor': fields.Boolean(description='Is competitor'),
     'status_flag': fields.String(description='Status flag'),
 })
 
@@ -126,6 +134,7 @@ EXAMPLE_COMPANY_CREATED = {
         "email": "info@example.com",
         "website": "https://example.com",
         "status_flag": "ACTIVE",
+        "is_competitor": False,
         "time": "2023-12-01T15:30:00Z"
     },
     "success": True
@@ -146,6 +155,7 @@ EXAMPLE_COMPANY_RETRIEVED = {
         "email": "info@example.com",
         "website": "https://example.com",
         "status_flag": "ACTIVE",
+        "is_competitor": False,
         "time": "2023-12-01T15:30:00Z"
     },
     "success": True
@@ -167,6 +177,7 @@ EXAMPLE_COMPANIES_LIST = {
             "email": "info@example.com",
             "website": "https://example.com",
             "status_flag": "ACTIVE",
+            "is_competitor": False,
             "time": "2023-12-01T15:30:00Z"
         },
         {
@@ -182,6 +193,7 @@ EXAMPLE_COMPANIES_LIST = {
             "email": "contact@another.com",
             "website": "https://another.com",
             "status_flag": "ACTIVE",
+            "is_competitor": False,
             "time": "2023-12-01T16:00:00Z"
         }
     ],
@@ -209,6 +221,7 @@ EXAMPLE_COMPANY_UPDATED = {
         "email": "updated@example.com",
         "website": "https://updated.com",
         "status_flag": "ACTIVE",
+        "is_competitor": False,
         "time": "2023-12-01T15:30:00Z"
     },
     "success": True
@@ -253,6 +266,7 @@ EXAMPLE_USER_COMPANIES_LIST = {
             "email": "info@example.com",
             "website": "https://example.com",
             "status_flag": "ACTIVE",
+            "is_competitor": False,
             "created_at": "2023-12-01T15:30:00Z"
         },
         {
@@ -261,6 +275,7 @@ EXAMPLE_USER_COMPANIES_LIST = {
             "company_name": "User's Company 2",
             "vat": "IT98765432109",
             "status_flag": "ACTIVE",
+            "is_competitor": False,
             "created_at": "2023-12-02T10:00:00Z"
         }
     ],

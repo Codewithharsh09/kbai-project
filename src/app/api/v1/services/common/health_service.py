@@ -17,9 +17,10 @@ import psutil
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
-from flask import current_app
+from flask import current_app, request
 from src.extensions import db
 from src.config import get_config
+from src.common.localization import get_message
 
 
 class HealthService:
@@ -63,11 +64,12 @@ class HealthService:
             }
         except Exception as e:
             current_app.logger.error(f"Health check failed: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
                 'status': 'unhealthy',
                 'timestamp': datetime.utcnow().isoformat(),
                 'version': 'v1',
-                'error': str(e)
+                'error': get_message('health_check_failed', locale, error=str(e))
             }
     
     def get_detailed_health(self) -> Dict[str, Any]:
@@ -86,7 +88,7 @@ class HealthService:
         except Exception as e:
             basic_health['checks']['application'] = {
                 'status': 'unhealthy',
-                'message': f"Application health check failed: {str(e)}"
+                'message': get_message('app_health_check_failed', request.headers.get('Accept-Language', 'en'), error=str(e))
             }
         
         # Add external service health checks
@@ -96,7 +98,7 @@ class HealthService:
         except Exception as e:
             basic_health['checks']['external_services'] = {
                 'status': 'unhealthy',
-                'message': f"External service health check failed: {str(e)}"
+                'message': get_message('external_service_check_failed', request.headers.get('Accept-Language', 'en'), error=str(e))
             }
         
         # Add performance metrics
@@ -115,6 +117,7 @@ class HealthService:
         Returns:
             tuple: (is_healthy, message)
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Test database connection
             db.session.execute('SELECT 1')
@@ -124,12 +127,12 @@ class HealthService:
             try:
                 # This is a simple query to test database responsiveness
                 result = db.session.execute('SELECT COUNT(*) FROM sqlite_master').scalar()
-                return True, f"Database connection healthy (tables: {result})"
+                return True, get_message('db_connection_healthy_with_count', locale, count=result)
             except Exception:
-                return True, "Database connection healthy"
+                return True, get_message('db_connection_healthy', locale)
                 
         except Exception as e:
-            return False, f"Database connection failed: {str(e)}"
+            return False, get_message('db_connection_failed', locale, error=str(e))
     
     def _check_system_resources(self) -> Dict[str, Any]:
         """
@@ -174,7 +177,7 @@ class HealthService:
         except Exception as e:
             return {
                 'status': 'unhealthy',
-                'error': str(e)
+                'error': str(e)  # System errors might be hard to translate directly without specifics
             }
     
     def _check_application_health(self) -> Dict[str, Any]:
@@ -198,12 +201,12 @@ class HealthService:
                 'status': 'healthy',
                 'user_count': user_count,
                 'configuration': config_healthy,
-                'message': f"Application running with {user_count} users"
+                'message': get_message('app_running_with_users', request.headers.get('Accept-Language', 'en'), count=user_count)
             }
         except Exception as e:
             return {
                 'status': 'unhealthy',
-                'message': f"Application health check failed: {str(e)}"
+                'message': get_message('app_health_check_failed', request.headers.get('Accept-Language', 'en'), error=str(e))
             }
     
     def _check_external_services(self) -> Dict[str, Any]:
@@ -218,27 +221,29 @@ class HealthService:
         # Check email service
         try:
             email_healthy = self._check_email_service()
+            msg_key = 'email_service_configured' if email_healthy else 'email_service_not_configured'
             services['email'] = {
                 'status': 'healthy' if email_healthy else 'unhealthy',
-                'message': 'Email service configured' if email_healthy else 'Email service not configured'
+                'message': get_message(msg_key, request.headers.get('Accept-Language', 'en'))
             }
         except Exception as e:
             services['email'] = {
                 'status': 'unhealthy',
-                'message': f"Email service check failed: {str(e)}"
+                'message': get_message('email_service_check_failed', request.headers.get('Accept-Language', 'en'), error=str(e))
             }
         
         # Check AI services
         try:
             ai_healthy = self._check_ai_services()
+            msg_key = 'ai_services_configured' if ai_healthy else 'ai_services_not_configured'
             services['ai_services'] = {
                 'status': 'healthy' if ai_healthy else 'unhealthy',
-                'message': 'AI services configured' if ai_healthy else 'AI services not configured'
+                'message': get_message(msg_key, request.headers.get('Accept-Language', 'en'))
             }
         except Exception as e:
             services['ai_services'] = {
                 'status': 'unhealthy',
-                'message': f"AI services check failed: {str(e)}"
+                'message': get_message('ai_services_check_failed', request.headers.get('Accept-Language', 'en'), error=str(e))
             }
         
         return services
@@ -251,16 +256,17 @@ class HealthService:
             dict: Configuration health information
         """
         config_issues = []
+        locale = request.headers.get('Accept-Language', 'en')
         
         # Check required configuration
         if not current_app.config.get('SECRET_KEY') or current_app.config.get('SECRET_KEY') == 'dev-key-change-in-production':
-            config_issues.append('SECRET_KEY not properly configured')
+            config_issues.append(get_message('secret_key_not_configured', locale))
         
         if not current_app.config.get('JWT_SECRET_KEY') or current_app.config.get('JWT_SECRET_KEY') == 'jwt-dev-key-change-in-production':
-            config_issues.append('JWT_SECRET_KEY not properly configured')
+            config_issues.append(get_message('jwt_secret_key_not_configured', locale))
         
         if not current_app.config.get('DATABASE_URL_DB'):
-            config_issues.append('DATABASE_URL_DB not configured')
+            config_issues.append(get_message('db_url_not_configured', locale))
         
         return {
             'status': 'healthy' if not config_issues else 'unhealthy',
@@ -308,8 +314,9 @@ class HealthService:
                 'timestamp': datetime.utcnow().isoformat()
             }
         except Exception as e:
+            current_app.logger.warning(f"Performance metrics collection failed: {str(e)}")
             return {
-                'error': str(e),
+                'error': get_message('performance_metrics_failed', request.headers.get('Accept-Language', 'en'), error=str(e)),
                 'timestamp': datetime.utcnow().isoformat()
             }
     

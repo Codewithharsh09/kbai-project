@@ -17,6 +17,7 @@ from src.common.response_utils import (
     success_response, error_response, validation_error_response,
     internal_error_response
 )
+from src.common.localization import get_message
 
 # Create namespace for pre-dashboard operations
 pre_dashboard_ns = Namespace('pre-dashboard', description='KBAI Pre-Dashboard operations')
@@ -40,6 +41,7 @@ class PreDashboardResource(Resource):
         Path Parameters:
             company_id (int): Company ID
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Call service
             response_data, status_code = kbai_pre_dashboard_service.findOne(company_id)
@@ -62,7 +64,10 @@ class PreDashboardResource(Resource):
                 )
                 
         except Exception as e:
-            return internal_error_response(f"Failed to retrieve pre-dashboard record: {str(e)}")
+            return internal_error_response(
+                message=get_message('pre_dashboard_retrieve_failed', locale),
+                error_details=str(e)
+            )
     
     # -------------------------------------------------------------------
     # Update a company pre-dashboard record
@@ -82,16 +87,20 @@ class PreDashboardResource(Resource):
             step_predictive (bool, optional): Predictive analysis step completion status
             completed_flag (bool, optional): Overall completion status
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Validate request data
             data = request.get_json()
             if not data:
-                return validation_error_response("Request body is required")
+                return validation_error_response(get_message('request_body_required', locale))
             
             # Validate with schema
             errors = update_pre_dashboard_schema.validate(data)
             if errors:
-                return validation_error_response("Validation failed", errors)
+                return validation_error_response(
+                    message=get_message('input_validation_failed', locale),
+                    validation_errors=errors
+                )
             
             # Call service
             response_data, status_code = kbai_pre_dashboard_service.update(company_id, data)
@@ -114,5 +123,8 @@ class PreDashboardResource(Resource):
                 )
                 
         except Exception as e:
-            return internal_error_response(f"Failed to update pre-dashboard record: {str(e)}")
+            return internal_error_response(
+                message=get_message('pre_dashboard_update_failed', locale),
+                error_details=str(e)
+            )
     

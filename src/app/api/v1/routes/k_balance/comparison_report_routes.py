@@ -12,6 +12,7 @@ from src.app.api.middleware import require_auth0, get_current_user
 from src.common.response_utils import (
     success_response, error_response, internal_error_response
 )
+from src.common.localization import get_message
 from src.app.api.v1.swaggers.k_balance.comparison_report_tab import (
     comparison_report_ns,
     comparison_report_request_model,
@@ -64,10 +65,11 @@ class ComparisonReport(Resource):
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
+            locale = request.headers.get('Accept-Language', 'en')
             
             if not current_user:
                 return error_response(
-                    message="Authentication required",
+                    message=get_message('authentication_required', locale),
                     status_code=401
                 )
             
@@ -76,7 +78,7 @@ class ComparisonReport(Resource):
             
             if not data:
                 return error_response(
-                    message="Request body is required",
+                    message=get_message('request_body_required', locale),
                     status_code=400
                 )
             
@@ -88,31 +90,31 @@ class ComparisonReport(Resource):
             # Validate required fields
             if not id_balance_year1:
                 return error_response(
-                    message="id_balance_year1 is required",
+                    message=get_message('id_balance_year1_required', locale),
                     status_code=400
                 )
             
             if not id_balance_year2:
                 return error_response(
-                    message="id_balance_year2 is required",
+                    message=get_message('id_balance_year2_required', locale),
                     status_code=400
                 )
             
             if not isinstance(id_balance_year1, int) or id_balance_year1 <= 0:
                 return error_response(
-                    message="id_balance_year1 must be a positive integer",
+                    message=get_message('id_balance_year1_positive', locale),
                     status_code=400
                 )
             
             if not isinstance(id_balance_year2, int) or id_balance_year2 <= 0:
                 return error_response(
-                    message="id_balance_year2 must be a positive integer",
+                    message=get_message('id_balance_year2_positive', locale),
                     status_code=400
                 )
             
             if id_balance_year1 == id_balance_year2:
                 return error_response(
-                    message="Both balance sheet IDs must be different",
+                    message=get_message('balance_ids_must_differ', locale),
                     status_code=400
                 )
             
@@ -134,7 +136,7 @@ class ComparisonReport(Resource):
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to generate comparison report'),
+                    message=response_data.get('message', get_message('comparison_report_generation_failed', locale)),
                     data=response_data,
                     status_code=status_code
                 )
@@ -142,7 +144,7 @@ class ComparisonReport(Resource):
         except Exception as e:
             current_app.logger.error(f"Comparison report generation error: {str(e)}")
             return internal_error_response(
-                message="Failed to generate comparison report",
+                message=get_message('comparison_report_generation_failed', locale),
                 error_details=str(e)
             )
 
@@ -180,10 +182,11 @@ class GetComparisonReportByCompanyId(Resource):
         """
         try:
             current_user = get_current_user()
+            locale = request.headers.get('Accept-Language', 'en')
             
             if not current_user:
                 return error_response(
-                    message="Authentication required",
+                    message=get_message('authentication_required', locale),
                     status_code=401
                 )
             
@@ -201,7 +204,7 @@ class GetComparisonReportByCompanyId(Resource):
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to retrieve comparison reports'),
+                    message=response_data.get('message', get_message('comparison_reports_retrieve_failed', locale)),
                     data=response_data,
                     status_code=status_code
                 )
@@ -209,7 +212,7 @@ class GetComparisonReportByCompanyId(Resource):
         except Exception as e:
             current_app.logger.error(f"Get comparison report by company ID error: {str(e)}")
             return internal_error_response(
-                message="Failed to retrieve comparison reports",
+                message=get_message('comparison_reports_retrieve_failed', locale),
                 error_details=str(e)
             )
 

@@ -18,7 +18,7 @@ class KbaiBalance(Base):
     id_balance = Column(BigInteger, primary_key=True, autoincrement=True)
     id_company = Column(BigInteger, ForeignKey('kbai.kbai_companies.id_company'), nullable=False)
     year = Column(SmallInteger, nullable=False)
-    month = Column(SmallInteger, nullable=False)
+    month = Column(SmallInteger)
     type = Column(String(255), nullable=False)
     mode = Column(String(255), nullable=False)
     file = Column(Text)

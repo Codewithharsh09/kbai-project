@@ -23,6 +23,7 @@ from functools import wraps
 from flask import request, current_app, g
 from src.common.response_utils import unauthorized_response, internal_error_response
 from src.app.api.v1.services import auth0_service
+from src.common.localization import get_message
 
 
 # -----------------------------------------------------------------------
@@ -56,10 +57,11 @@ def _extract_token_from_request():
             - error_response (tuple): Error response tuple or None
     """
     auth_header = request.headers.get('Authorization')
+    locale = request.headers.get('Accept-Language', 'en')
     
     if not auth_header:
         return None, unauthorized_response(
-            message="Authorization header is required",
+            message=get_message('authorization_required', locale),
             reason="missing_authorization_header"
         )
     
@@ -67,7 +69,7 @@ def _extract_token_from_request():
     parts = auth_header.split()
     if len(parts) != 2 or parts[0].lower() != 'bearer':
         return None, unauthorized_response(
-            message="Invalid authorization header format. Expected: Bearer <token>",
+            message=get_message('invalid_auth_header', locale),
             reason="invalid_authorization_format"
         )
     
@@ -90,6 +92,7 @@ def _verify_and_get_user(token):
             - user (TbUser): User object or None
             - error_response (tuple): Error response tuple or None
     """
+    locale = request.headers.get('Accept-Language', 'en')
     try:
         from src.app.database.models import TbUser
         
@@ -98,7 +101,7 @@ def _verify_and_get_user(token):
         
         if not claims:
             return None, unauthorized_response(
-                message="Token verification failed",
+                message=get_message('invalid_token', locale),
                 reason="invalid_token"
             )
         
@@ -107,7 +110,7 @@ def _verify_and_get_user(token):
         
         if not auth0_user_id:
             return None, unauthorized_response(
-                message="Token does not contain user ID (sub)",
+                message=get_message('missing_claims', locale),
                 reason="missing_sub_claim"
             )
         
@@ -119,7 +122,7 @@ def _verify_and_get_user(token):
                 f"User not found in database for Auth0 ID: {auth0_user_id}"
             )
             return None, unauthorized_response(
-                message="User not found. Please contact administrator.",
+                message=get_message('user_not_found', locale),
                 reason="user_not_found"
             )
         
@@ -129,7 +132,7 @@ def _verify_and_get_user(token):
                 f"Inactive user attempted login: {user.email} (Status: {user.status})"
             )
             return None, unauthorized_response(
-                message=f"User account is {user.status}",
+                message=get_message('account_status_error', locale, status=user.status),
                 reason="account_inactive"
             )
         
@@ -139,7 +142,7 @@ def _verify_and_get_user(token):
     except Exception as e:
         current_app.logger.error(f"Auth0 token verification error: {str(e)}")
         return None, internal_error_response(
-            message="Authentication failed",
+            message=get_message('Authentication failed', locale),
             error_details=str(e)
         )
 

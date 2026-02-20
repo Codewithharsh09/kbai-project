@@ -7,11 +7,12 @@ import secrets
 import hashlib
 from typing import Dict, Any, Tuple, Optional
 from datetime import datetime, timedelta
-from flask import current_app
+from flask import current_app, request
 from sqlalchemy import and_
 
 from src.app.database.models import TbOtp, TbUser
 from src.extensions import db
+from src.common.localization import get_message
 
 
 class OtpService:
@@ -73,9 +74,10 @@ class OtpService:
             else:
                 # Check if user is active
                 if user.status != 'ACTIVE':
+                    locale = request.headers.get('Accept-Language', 'en')
                     return {
-                        'error': 'Account inactive',
-                        'message': 'Your account is not active. Please contact support.'
+                        'error': get_message('account_inactive', locale),
+                        'message': get_message('account_not_active_support', locale)
                     }, 403
             
             # Clean up expired OTPs first
@@ -116,15 +118,17 @@ class OtpService:
                 # Rollback if email sending failed
                 db.session.delete(otp_record)
                 db.session.commit()
+                locale = request.headers.get('Accept-Language', 'en')
                 return {
-                    'error': 'Email sending failed',
-                    'message': 'Failed to send OTP email. Please try again.'
+                    'error': get_message('email_sending_failed', locale),
+                    'message': get_message('otp_email_send_failed', locale)
                 }, 500
             
             current_app.logger.info(f"OTP created for {email}: {otp}")
             
+            locale = request.headers.get('Accept-Language', 'en')
             return {
-                'message': 'OTP sent successfully',
+                'message': get_message('otp_sent_success', locale),
                 'email': email,
                 'expires_in_minutes': self.otp_expiry_minutes,
                 'success': True
@@ -133,8 +137,9 @@ class OtpService:
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"Create OTP error: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
-                'error': 'Failed to create OTP',
+                'error': get_message('otp_create_failed', locale),
                 'message': str(e)
             }, 500
     
@@ -150,9 +155,10 @@ class OtpService:
                 # Get user without checking OTP record
                 user = TbUser.query.filter_by(email=email).first()
                 if not user:
+                    locale = request.headers.get('Accept-Language', 'en')
                     return {
-                        'error': 'User not found',
-                        'message': 'User not found'
+                        'error': get_message('user_not_found', locale),
+                        'message': get_message('user_not_found', locale)
                     }, 404
                 
                 # Mark any existing OTP as used (if exists)
@@ -170,8 +176,9 @@ class OtpService:
                 
                 current_app.logger.info(f"Development OTP verified successfully for {email}")
                 
+                locale = request.headers.get('Accept-Language', 'en')
                 return {
-                    'message': 'OTP verified successfully (development mode)',
+                    'message': get_message('otp_verified_dev_success', locale),
                     'user': user.to_dict(),
                     'success': True,
                     'development_mode': True
@@ -181,9 +188,10 @@ class OtpService:
             otp_record = TbOtp.get_valid_otp(email, otp)
             
             if not otp_record:
+                locale = request.headers.get('Accept-Language', 'en')
                 return {
-                    'error': 'Invalid OTP',
-                    'message': 'Invalid or expired OTP. Please request a new one or use 123456 for development.'
+                    'error': get_message('invalid_otp', locale),
+                    'message': get_message('invalid_otp_message', locale)
                 }, 400
             
             # Mark OTP as used
@@ -193,15 +201,17 @@ class OtpService:
             # Get user
             user = TbUser.query.filter_by(email=email).first()
             if not user:
+                locale = request.headers.get('Accept-Language', 'en')
                 return {
-                    'error': 'User not found',
-                    'message': 'User not found'
+                    'error': get_message('user_not_found', locale),
+                    'message': get_message('user_not_found', locale)
                 }, 404
             
             current_app.logger.info(f"OTP verified successfully for {email}")
             
+            locale = request.headers.get('Accept-Language', 'en')
             return {
-                'message': 'OTP verified successfully',
+                'message': get_message('otp_verified_success', locale),
                 'user': user.to_dict(),
                 'success': True,
                 'development_mode': False
@@ -210,8 +220,9 @@ class OtpService:
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"Verify OTP error: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
-                'error': 'Failed to verify OTP',
+                'error': get_message('otp_verify_failed', locale),
                 'message': str(e)
             }, 500
     

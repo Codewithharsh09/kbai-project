@@ -13,6 +13,7 @@ from src.common.response_utils import (
     success_response, error_response, validation_error_response,
     unauthorized_response, internal_error_response, not_found_response
 )
+from src.common.localization import get_message
 from src.app.api.schemas.public.password_reset_schemas import (
     RequestPasswordResetSchema,
     ResetPasswordSchema
@@ -72,6 +73,7 @@ class RequestPasswordReset(Resource):
         Always returns success message (security best practice).
         Response is immediate - email sending happens in background.
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Validate input data
             schema = RequestPasswordResetSchema()
@@ -81,7 +83,7 @@ class RequestPasswordReset(Resource):
                 # Normalize message so tests can assert on 'invalid' wording
                 return validation_error_response(
                     validation_errors=err.messages,
-                    message="If this email is registered, you will receive a reset link shortly."
+                    message=get_message('password_reset_email_sent', locale)
                 )
 
             email = validated_data.get('email')
@@ -102,18 +104,18 @@ class RequestPasswordReset(Resource):
             
             # Return immediate success response (security: don't reveal if email exists)
             return success_response(
-                message="If this email is registered, you will receive a reset link shortly.",
+                message=get_message('password_reset_email_sent', locale),
                 data={
                     'email': email,
                     'success': True,
-                    'note': 'Please check your email for the reset link.'
+                    'note': get_message('password_reset_check_email', locale)
                 }
             )
 
         except Exception as e:
             current_app.logger.error(f"Password reset request error: {str(e)}")
             return internal_error_response(
-                message="Password reset request failed",
+                message=get_message('password_reset_request_failed', locale),
                 error_details=str(e)
             )
 
@@ -132,6 +134,7 @@ class ResetPassword(Resource):
         Resets the user's password and invalidates the token.
         User must log in again after successful reset.
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Validate input data
             schema = ResetPasswordSchema()
@@ -140,7 +143,7 @@ class ResetPassword(Resource):
             except ValidationError as err:
                 return validation_error_response(
                     validation_errors=err.messages,
-                    message="Input validation failed: invalid token"
+                    message=get_message('password_reset_invalid_token', locale)
                 )
 
             token = validated_data.get('token')
@@ -151,12 +154,12 @@ class ResetPassword(Resource):
 
             if status_code == 200:
                 return success_response(
-                    message=response_data.get('message', 'Password reset successfully'),
+                    message=get_message('password_reset_success', locale),
                     data=response_data
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Password reset failed'),
+                    message=get_message('password_reset_failed', locale),
                     data=response_data,
                     status_code=status_code
                 )
@@ -164,7 +167,7 @@ class ResetPassword(Resource):
         except Exception as e:
             current_app.logger.error(f"Password reset error: {str(e)}")
             return internal_error_response(
-                message="Password reset failed",
+                message=get_message('password_reset_failed', locale),
                 error_details=str(e)
             )
 
@@ -182,6 +185,7 @@ class CleanupExpiredTokens(Resource):
         Removes all expired reset tokens from database.
         This endpoint should be called periodically for maintenance.
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # TODO: Add admin authentication check
             # For now, allow any request for maintenance
@@ -190,13 +194,13 @@ class CleanupExpiredTokens(Resource):
             cleaned_count = password_reset_service.cleanup_expired_tokens()
 
             return success_response(
-                message=f"Cleaned up {cleaned_count} expired password reset tokens",
+                message=get_message('password_reset_cleanup_success', locale, count=cleaned_count),
                 data={"cleaned_count": cleaned_count}
             )
 
         except Exception as e:
             current_app.logger.error(f"Token cleanup error: {str(e)}")
             return internal_error_response(
-                message="Failed to cleanup tokens",
+                message=get_message('password_reset_cleanup_failed', locale),
                 error_details=str(e)
             )

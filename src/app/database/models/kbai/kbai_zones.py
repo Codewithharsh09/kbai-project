@@ -72,8 +72,8 @@ class KbaiZone(Base):
                 region=zone_data.get('region'),
                 country=zone_data.get('country'),
                 postal_code=zone_data.get('postal_code'),
-                created_at=now,
-                updated_at=now
+                # created_at=now,
+                # updated_at=now
             )
 
             db.session.add(zone)

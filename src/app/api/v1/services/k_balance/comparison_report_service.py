@@ -8,6 +8,8 @@ from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 import re
 import logging
+from flask import current_app, request
+from src.common.localization import get_message
 
 from src.app.database.models import (
     KbaiBalance,
@@ -21,6 +23,7 @@ from src.app.database.models import (
     TbUserCompany,
     KbaiPreDashboard,
 )
+from src.app.database.models.kbai.kbai_companies import KbaiCompany
 # from src.app.database.models.kbai_balance.kbai_kpi_values import KbaiKpiValue
 from src.extensions import db
 from .comparison_report import (
@@ -64,6 +67,23 @@ class ComparisonReportService:
 
         base = re.sub(r"[^A-Za-z0-9]+", "_", kpi_name.upper()).strip("_")
         return f"CUSTOM_{base}"
+    
+    def _is_valid_db_percentage(self, value: float) -> bool:
+        """
+        Validate percentage value before saving to DB.
+
+        Currently we accept any numeric value (no artificial range limit).
+        Database column uses generic NUMERIC type which can store large values.
+        """
+        try:
+            if value is None:
+                return True
+
+            # Ensure it is numeric; any finite float is accepted
+            float(value)
+            return True
+        except (ValueError, TypeError):
+            return False
 
     def _store_kpis_for_balance(
         self,
@@ -234,7 +254,6 @@ class ComparisonReportService:
                 elif deviation >= 0.0:
                     critical_percentage = 0.0
                     acceptable_percentage = deviation
-
             existing_logic = KpiLogic.findOne(id_kpi=kpi_value.id_kpi)
 
             if existing_logic:
@@ -311,8 +330,30 @@ class ComparisonReportService:
                 id_company=company_id
             ).first()
             
-            if not user_company:
-                return False, "Access denied: You don't have permission to access this company"
+            if user_company:
+                return True, ""
+
+            # Competitor flow: allow access via parent_company_id assignment
+            competitor_company = KbaiCompany.query.filter_by(
+                id_company=company_id,
+                is_competitor=True,
+                is_deleted=False
+            ).first()
+
+            if competitor_company:
+                parent_company_id = competitor_company.parent_company_id
+                if not parent_company_id:
+                    return False, get_message('invalid_competitor_company_msg', request.headers.get('Accept-Language', 'en'))
+
+                parent_user_company = TbUserCompany.query.filter_by(
+                    id_user=current_user.id_user,
+                    id_company=parent_company_id
+                ).first()
+
+                if parent_user_company:
+                    return True, ""
+
+            return False, get_message('access_denied_permission', request.headers.get('Accept-Language', 'en'))
         
         return True, ""
     
@@ -342,20 +383,25 @@ class ComparisonReportService:
             Tuple of (response_data, status_code)
         """
         try:
-            balance = KbaiBalance.query.filter_by(id_balance=id_balance).first()
+            locale = 'en'
+            try:
+                if request:
+                    locale = request.headers.get('Accept-Language', 'en')
+            except (RuntimeError, AttributeError):
+                pass
+            balance = KbaiBalance.query.filter_by(id_balance=id_balance, is_deleted = False).first()
             
             if not balance:
                 return {
-                    'message': 'Balance sheet with ID not found',
+                    'message': get_message('balance_sheet_id_not_found', locale, id_balance=id_balance),
                     'data': None
                 }, 404
             
             if not balance.balance:
                 return {
-                    'message': 'Balance sheet has no balance data',
+                    'message': get_message('balance_sheet_no_data', locale),
                     'data': None
                 }, 400
-            
             # Calculate KPIs using FinancialKPIAnalyzer
             analyzer = FinancialKPIAnalyzer(
                 balance.balance,
@@ -378,13 +424,13 @@ class ComparisonReportService:
                 )
                 db.session.rollback()
                 return {
-                    "message": "Failed to store KPI values",
+                    "message": get_message('failed_store_kpi_values', locale),
                     "data": None,
                     "error": str(e),
                 }, 500
             
             return {
-                'message': 'KPIs calculated and stored successfully',
+                'message': get_message('kpi_calc_stored_success', locale),
                 'data': {
                     'id_balance': id_balance,
                     'year': balance.year,
@@ -394,12 +440,13 @@ class ComparisonReportService:
             }, 200
             
         except Exception as e:
+            locale = request.headers.get('Accept-Language', 'en')
             logger.error(
                 f"Error calculating KPIs for balance {id_balance}: {str(e)}",
                 exc_info=True
             )
             return {
-                'message': 'Failed to calculate KPIs',
+                'message': get_message('kpi_calc_failed', locale),
                 'data': None,
                 'error': str(e)
             }, 500
@@ -407,9 +454,9 @@ class ComparisonReportService:
     def auto_generate_comparison_after_upload(
         self,
         company_id: int,
-        current_user: TbUser,
-        newly_uploaded_balance_id: int,
-        newly_uploaded_year: int
+        current_user: Optional[TbUser] = None,
+        newly_uploaded_balance_id: int = None,
+        newly_uploaded_year: int = None
     ) -> Tuple[Dict[str, Any], int]:
         """
         Automatically check and generate comparison report after balance sheet upload.
@@ -422,7 +469,7 @@ class ComparisonReportService:
         
         Args:
             company_id: Company ID
-            current_user: Current authenticated user
+            current_user: Current authenticated user (optional)
             newly_uploaded_balance_id: ID of the newly uploaded balance sheet
             newly_uploaded_year: Year of the newly uploaded balance sheet
             
@@ -430,14 +477,22 @@ class ComparisonReportService:
             Tuple of (response_data, status_code)
         """
         try:
-            # Check company access
-            has_access, error_msg = self.check_company_access(current_user, company_id)
-            if not has_access:
-                return {
-                    'message': error_msg,
-                    'data': None,
-                    'auto_generated': False
-                }, 403
+            locale = 'en'
+            try:
+                if request:
+                    locale = request.headers.get('Accept-Language', 'en')
+            except (RuntimeError, AttributeError):
+                pass
+                
+            # Check company access if current_user is provided
+            if current_user:
+                has_access, error_msg = self.check_company_access(current_user, company_id)
+                if not has_access:
+                    return {
+                        'message': error_msg,
+                        'data': None,
+                        'auto_generated': False
+                    }, 403
             
             # Get all balance sheets with balance data, ordered by year DESC only
             # Group by year and get the most recent balance sheet for each year
@@ -458,7 +513,6 @@ class ComparisonReportService:
             
             # Get unique years sorted ascending (to get last 2 easily)
             unique_years = sorted(year_to_balance.keys())
-            
             # Check if we have at least 2 balance sheets (from different years)
             if len(unique_years) < 2:
                 logger.info(
@@ -466,22 +520,25 @@ class ComparisonReportService:
                     "At least 2 different years are required for comparison. "
                     "Calculating KPIs for uploaded balance sheet only."
                 )
-                
-                # Calculate and store KPIs for the newly uploaded balance
                 kpi_result, kpi_status = self.calculate_and_store_kpis_for_balance(
                     id_balance=newly_uploaded_balance_id,
                     source="single_balance_upload"
-                )
-                
+                    )
                 return {
-                    'message': 'Insufficient balance sheets for comparison.',
-                    'data': {
-                        'balance_count': len(unique_years),
-                        'required': 2,
-                        'kpis_calculated': kpi_result.get('data') is not None
-                    },
-                    'auto_generated': False
-                }, 200
+                'message': get_message('insufficient_balance_sheets', locale),
+                'data': {
+                    'balance_count': len(unique_years),
+                    'required': 2,
+                    'kpis_calculated': kpi_result.get('data') is not None
+                },
+                'auto_generated': False
+                    }, 200
+                
+                # Calculate and store KPIs for the newly uploaded balance
+            kpi_result, kpi_status = self.calculate_and_store_kpis_for_balance(
+                id_balance=newly_uploaded_balance_id,
+                source="single_balance_upload"
+            )
             
             # Get the last 2 years (after sorting ascending)
             last_two_years = unique_years[-2:]  # Last 2 years
@@ -513,7 +570,7 @@ class ComparisonReportService:
                         "Skipping regeneration."
                     )
                     return {
-                        'message': 'Comparison report already exists for the two most recent balance sheets',
+                        'message': get_message('comparison_report_exists', locale),
                         'data': {
                             'existing_analysis_id': existing_analysis.id_analysis,
                             'year1': second_last_year,
@@ -542,7 +599,7 @@ class ComparisonReportService:
                 
                 if status_code == 201:
                     return {
-                        'message': 'Comparison report auto-generated successfully',
+                        'message': get_message('comparison_report_auto_generated_success', locale),
                         'data': response_data.get('data'),
                         'auto_generated': True
                     }, 201
@@ -551,7 +608,7 @@ class ComparisonReportService:
                         f"Failed to auto-generate comparison report: {response_data.get('message', 'Unknown error')}"
                     )
                     return {
-                        'message': 'Failed to auto-generate comparison report',
+                        'message': get_message('comparison_report_auto_generated_failed', locale),
                         'data': response_data,
                         'auto_generated': False
                     }, status_code
@@ -568,9 +625,8 @@ class ComparisonReportService:
                     id_balance=newly_uploaded_balance_id,
                     source="single_balance_upload"
                 )
-                
                 return {
-                    'message': 'KPIs calculated for uploaded balance sheet. No comparison generated (not in last 2 years).',
+                    'message': get_message('kpi_calc_uploaded_no_comparison', locale),
                     'data': {
                         'last_two_years': last_two_years,
                         'uploaded_year': newly_uploaded_year,
@@ -581,13 +637,14 @@ class ComparisonReportService:
                 }, 200
                 
         except Exception as e:
+            locale = request.headers.get('Accept-Language', 'en')
             logger.error(
                 f"Error in auto_generate_comparison_after_upload for company {company_id}: {str(e)}",
                 exc_info=True
             )
             # Don't fail the upload if auto-generation fails
             return {
-                'message': 'Error during auto-generation of comparison report',
+                'message': get_message('comparison_report_generation_error', locale),
                 'data': None,
                 'error': str(e),
                 'auto_generated': False
@@ -597,7 +654,7 @@ class ComparisonReportService:
         self,
         id_balance_year1: int,
         id_balance_year2: int,
-        current_user: TbUser,
+        current_user: Optional[TbUser] = None,
         analysis_name: Optional[str] = None,
         debug_mode: bool = False
     ) -> Tuple[Dict[str, Any], int]:
@@ -607,7 +664,7 @@ class ComparisonReportService:
         Args:
             id_balance_year1: Balance sheet ID for year 1
             id_balance_year2: Balance sheet ID for year 2
-            current_user: Current authenticated user
+            current_user: Current authenticated user (optional)
             analysis_name: Optional custom name for the analysis
             debug_mode: Include debug information in response
             
@@ -615,6 +672,12 @@ class ComparisonReportService:
             Tuple of (response_data, status_code)
         """
         try:
+            locale = 'en'
+            try:
+                if request:
+                    locale = request.headers.get('Accept-Language', 'en')
+            except (RuntimeError, AttributeError):
+                pass
             # Fetch balance sheets
             balance_year1 = KbaiBalance.query.filter_by(
                 id_balance=id_balance_year1,
@@ -626,54 +689,55 @@ class ComparisonReportService:
             
             if not balance_year1:
                 return {
-                    'message': f'Balance sheet with ID {id_balance_year1} not found',
+                    'message': get_message('balance_sheet_id_not_found', locale, id_balance=id_balance_year1),
                     'data': None
                 }, 404
             
             if not balance_year2:
                 return {
-                    'message': f'Balance sheet with ID {id_balance_year2} not found',
+                    'message': get_message('balance_sheet_id_not_found', locale, id_balance=id_balance_year2),
                     'data': None
                 }, 404
             
-            # Check access to both companies
-            has_access, error_msg = self.check_company_access(
-                current_user, 
-                balance_year1.id_company
-            )
-            if not has_access:
-                return {
-                    'message': error_msg,
-                    'data': None
-                }, 403
-            
-            has_access, error_msg = self.check_company_access(
-                current_user, 
-                balance_year2.id_company
-            )
-            if not has_access:
-                return {
-                    'message': error_msg,
-                    'data': None
-                }, 403
+            # Check access to both companies if current_user is provided
+            if current_user:
+                has_access, error_msg = self.check_company_access(
+                    current_user, 
+                    balance_year1.id_company
+                )
+                if not has_access:
+                    return {
+                        'message': error_msg,
+                        'data': None
+                    }, 403
+                
+                has_access, error_msg = self.check_company_access(
+                    current_user, 
+                    balance_year2.id_company
+                )
+                if not has_access:
+                    return {
+                        'message': error_msg,
+                        'data': None
+                    }, 403
             
             # Verify both balances belong to same company
             if balance_year1.id_company != balance_year2.id_company:
                 return {
-                    'message': 'Both balance sheets must belong to the same company',
+                    'message': get_message('balance_sheet_same_company_required', locale),
                     'data': None
                 }, 400
             
             # Check if balance data exists
             if not balance_year1.balance:
                 return {
-                    'message': f'Balance sheet {id_balance_year1} has no balance data',
+                    'message': get_message('balance_sheet_id_no_data', locale, id_balance=id_balance_year1),
                     'data': None
                 }, 400
             
             if not balance_year2.balance:
                 return {
-                    'message': f'Balance sheet {id_balance_year2} has no balance data',
+                    'message': get_message('balance_sheet_id_no_data', locale, id_balance=id_balance_year2),
                     'data': None
                 }, 400
             
@@ -715,7 +779,7 @@ class ComparisonReportService:
                 )
                 db.session.rollback()
                 return {
-                    "message": "Failed to store KPI values",
+                    "message": get_message('failed_store_kpi_values', locale),
                     "data": None,
                     "error": str(e),
                 }, 500
@@ -754,7 +818,7 @@ class ComparisonReportService:
             if error:
                 logger.error(f"Failed to create analysis: {error}")
                 return {
-                    'message': 'Failed to create analysis record',
+                    'message': get_message('failed_create_analysis', locale),
                     'data': None,
                     'error': error
                 }, 500
@@ -776,7 +840,7 @@ class ComparisonReportService:
             if error:
                 logger.error(f"Failed to create report: {error}")
                 return {
-                    'message': 'Failed to create report record',
+                    'message': get_message('failed_create_report', locale),
                     'data': None,
                     'error': error
                 }, 500
@@ -823,31 +887,33 @@ class ComparisonReportService:
                 # 'created_at': analysis.created_at.isoformat() if analysis.created_at else None
             }
             
-            # Update pre-dashboard step_compare to true after successful report generation
-            try:
-                pre_dashboard = KbaiPreDashboard.findOne(id_company=balance_year1.id_company)
-                if pre_dashboard:
-                    success, update_error = pre_dashboard.update({'step_compare': True})
-                    if success:
-                        logger.info(f"Updated step_compare to true for company {balance_year1.id_company} after comparison report generation")
-                    else:
-                        logger.warning(f"Failed to update step_compare for company {balance_year1.id_company}: {update_error}")
-                else:
-                    logger.warning(f"Pre-dashboard not found for company {balance_year1.id_company}, cannot update step_compare")
-            except Exception as e:
-                # Log error but don't fail the report generation
-                logger.error(f"Error updating pre-dashboard step_compare for company {balance_year1.id_company}: {str(e)}")
+            # # Update pre-dashboard step_compare to true after successful report generation
+            # try:
+            #     pre_dashboard = KbaiPreDashboard.findOne(id_company=balance_year1.id_company)
+            #     if pre_dashboard:
+            #         success, update_error = pre_dashboard.update({'step_compare': True,'step_competitor': True})
+
+            #         if success:
+            #             logger.info(f"Updated step_compare to true for company {balance_year1.id_company} after comparison report generation")
+            #         else:
+            #             logger.warning(f"Failed to update step_compare for company {balance_year1.id_company}: {update_error}")
+            #     else:
+            #         logger.warning(f"Pre-dashboard not found for company {balance_year1.id_company}, cannot update step_compare")
+            # except Exception as e:
+            #     # Log error but don't fail the report generation
+            #     logger.error(f"Error updating pre-dashboard step_compare for company {balance_year1.id_company}: {str(e)}")
             
             return {
-                'message': 'Comparison report generated successfully',
+                'message': get_message('comparison_report_generated_success', locale),
                 'data': response_data
             }, 201
             
         except Exception as e:
+            locale = request.headers.get('Accept-Language', 'en')
             logger.error(f"Error generating comparison report: {str(e)}", exc_info=True)
             db.session.rollback()
             return {
-                'message': 'Failed to generate comparison report',
+                'message': get_message('comparison_report_generation_failed', locale),
                 'data': None,
                 'error': str(e)
             }, 500
@@ -869,6 +935,7 @@ class ComparisonReportService:
             Tuple of (response_data, status_code)
         """
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # Check company access
             has_access, error_msg = self.check_company_access(current_user, company_id)
             if not has_access:
@@ -889,7 +956,7 @@ class ComparisonReportService:
             
             if not all_balances:
                 return {
-                    'message': f'No balance sheets found for this company',
+                    'message': get_message('no_balance_sheets_found', locale),
                     'data': None
                 }, 404
             
@@ -897,7 +964,7 @@ class ComparisonReportService:
             unique_years = set(balance.year for balance in all_balances)
             if len(unique_years) < 2:
                 return {
-                    'message': 'Minimum 2 balance sheets are required for comparison.',
+                    'message': get_message('min_balance_sheets_required', locale),
                     'data': {
                         'data': None
                     }
@@ -1172,14 +1239,15 @@ class ComparisonReportService:
             }
             
             return {
-                'message': 'Comparison reports retrieved successfully',
+                'message': get_message('comparison_reports_retrieved_success', locale),
                 'data': response_data
             }, 200
             
         except Exception as e:
+            locale = request.headers.get('Accept-Language', 'en')
             logger.error(f"Error getting comparison reports by company ID: {str(e)}", exc_info=True)
             return {
-                'message': 'Failed to retrieve comparison reports',
+                'message': get_message('comparison_reports_retrieve_failed', locale),
                 'data': None,
                 'error': str(e)
             }, 500
@@ -1209,6 +1277,7 @@ class ComparisonReportService:
             Tuple of (response_data, status_code)
         """
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # Check company access
             has_access, error_msg = self.check_company_access(current_user, company_id)
             if not has_access:
@@ -1244,7 +1313,7 @@ class ComparisonReportService:
                     "At least 2 different years are required for comparison."
                 )
                 return {
-                    'message': 'Insufficient balance sheets for comparison after deletion.',
+                    'message': get_message('insufficient_balance_sheets', locale),
                     'data': {
                         'balance_count': len(unique_years),
                         'required': 2
@@ -1280,7 +1349,7 @@ class ComparisonReportService:
                     "No regeneration needed."
                 )
                 return {
-                    'message': 'Comparison report already exists for the two most recent balance sheets',
+                    'message': get_message('comparison_report_exists', locale),
                     'data': {
                         'existing_analysis_id': existing_analysis.id_analysis,
                         'year1': second_last_year,
@@ -1308,7 +1377,7 @@ class ComparisonReportService:
             
             if status_code == 201:
                 return {
-                    'message': 'Comparison report auto-generated successfully after deletion',
+                    'message': get_message('comparison_report_auto_generated_success', locale),
                     'data': {
                         'id_analysis': response_data.get('data', {}).get('id_analysis'),
                         'year1': second_last_year,
@@ -1323,18 +1392,19 @@ class ComparisonReportService:
                     f"Failed to auto-generate comparison after deletion: {response_data.get('message', 'Unknown error')}"
                 )
                 return {
-                    'message': 'Failed to auto-generate comparison report after deletion',
+                    'message': get_message('comparison_report_auto_generated_failed', locale),
                     'data': response_data,
                     'auto_generated': False
                 }, status_code
             
         except Exception as e:
+            locale = request.headers.get('Accept-Language', 'en')
             logger.error(
                 f"Error during auto-generation of comparison report after deletion: {str(e)}",
                 exc_info=True
             )
             return {
-                'message': 'Error during auto-generation of comparison report after deletion',
+                'message': get_message('comparison_report_generation_error', locale),
                 'data': None,
                 'error': str(e),
                 'auto_generated': False

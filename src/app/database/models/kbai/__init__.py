@@ -15,6 +15,7 @@ from .kbai_sectors import KbaiSector
 from .kbai_state import KbaiState
 from .kbai_zones import KbaiZone
 from .kbai_threshold import KbaiThreshold
+from .province_region import ProvinceRegion
 
 __all__ = [
     "KbaiCompany",
@@ -25,4 +26,5 @@ __all__ = [
     "KbaiState",
     "KbaiZone",
     "KbaiThreshold",
+    "ProvinceRegion",
 ]
