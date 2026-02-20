@@ -10,7 +10,8 @@ across all endpoints in the format:
 }
 """
 
-from flask import jsonify, make_response
+from flask import jsonify, make_response, request
+from src.common.localization import get_message
 from typing import Any, Dict, Optional, Union
 from datetime import datetime
 
@@ -56,7 +57,7 @@ def create_response(
 # Success response
 # ---------------------------------------------------------------------
 def success_response(
-    message: str = "Operation completed successfully",
+    message: str = None,
     data: Optional[Dict[str, Any]] = None,
     status_code: int = 200,
     set_cookie: Optional[Dict[str, Any]] = None
@@ -73,6 +74,11 @@ def success_response(
     Returns:
         Dict or tuple: Success response
     """
+
+    if message is None:
+        locale = request.headers.get('locale', 'en')
+        message = get_message('default_success', locale)
+        
     return create_response(
         success=True,
         message=message,
@@ -86,7 +92,7 @@ def success_response(
 # Error response
 # ---------------------------------------------------------------------
 def error_response(
-    message: str = "An error occurred",
+    message: str = None,
     data: Optional[Dict[str, Any]] = None,
     status_code: int = 400,
     error_details: Optional[str] = None
@@ -107,6 +113,10 @@ def error_response(
     if error_details:
         error_data["error_details"] = error_details
     
+    if message is None:
+        locale = request.headers.get('Accept-Language', 'en')
+        message = get_message('default_error', locale)
+        
     return create_response(
         success=False,
         message=message,
@@ -120,7 +130,7 @@ def error_response(
 # ---------------------------------------------------------------------
 def validation_error_response(
     validation_errors: Union[str, Dict],
-    message: str = "Validation failed"
+    message: str = None
 ) -> tuple:
     """
     Create a validation error response
@@ -132,6 +142,11 @@ def validation_error_response(
     Returns:
         tuple: Validation error response
     """
+
+    if message is None:
+        locale = request.headers.get('Accept-Language', 'en')
+        message = get_message('validation_failed', locale)
+        
     return error_response(
         message=message,
         data={"validation_errors": validation_errors},
@@ -143,7 +158,7 @@ def validation_error_response(
 # Not found response
 # ---------------------------------------------------------------------
 def not_found_response(
-    message: str = "Resource not found",
+    message: str = None,
     resource_type: str = "Resource"
 ) -> tuple:
     """
@@ -156,6 +171,11 @@ def not_found_response(
     Returns:
         tuple: Not found response
     """
+
+    if message is None:
+        locale = request.headers.get('Accept-Language', 'en')
+        message = get_message('resource_not_found', locale)
+        
     return error_response(
         message=message,
         data={"resource_type": resource_type},
@@ -167,7 +187,7 @@ def not_found_response(
 # Unauthorized response
 # ---------------------------------------------------------------------
 def unauthorized_response(
-    message: str = "Unauthorized access",
+    message: str = None,
     reason: str = None
 ) -> tuple:
     """
@@ -184,6 +204,11 @@ def unauthorized_response(
     if reason:
         data["reason"] = reason
     
+
+    if message is None:
+        locale = request.headers.get('Accept-Language', 'en')
+        message = get_message('unauthorized_access', locale)
+        
     return error_response(
         message=message,
         data=data,
@@ -195,7 +220,7 @@ def unauthorized_response(
 # Forbidden response
 # ---------------------------------------------------------------------
 def forbidden_response(
-    message: str = "Access forbidden",
+    message: str = None,
     reason: str = None
 ) -> tuple:
     """
@@ -212,6 +237,11 @@ def forbidden_response(
     if reason:
         data["reason"] = reason
     
+
+    if message is None:
+        locale = request.headers.get('Accept-Language', 'en')
+        message = get_message('access_forbidden', locale)
+        
     return error_response(
         message=message,
         data=data,
@@ -223,7 +253,7 @@ def forbidden_response(
 # Internal error response
 # ---------------------------------------------------------------------
 def internal_error_response(
-    message: str = "Internal server error",
+    message: str = None,
     error_details: str = None
 ) -> tuple:
     """
@@ -236,6 +266,11 @@ def internal_error_response(
     Returns:
         tuple: Internal error response
     """
+
+    if message is None:
+        locale = request.headers.get('Accept-Language', 'en')
+        message = get_message('internal_server_error', locale)
+        
     return error_response(
         message=message,
         data={"error_details": error_details} if error_details else {},

@@ -11,8 +11,9 @@ License: MIT
 
 from functools import wraps
 from typing import List, Tuple
-from flask import current_app
+from flask import current_app, request
 from src.common.response_utils import unauthorized_response
+from src.common.localization import get_message
 from .auth0_verify import get_current_user
 
 
@@ -58,20 +59,20 @@ def can_create_role(creator_role: str, target_role: str) -> Tuple[bool, str]:
         if target_normalized in ['admin', 'user']:
             return True, ""
         else:
-            return False, "staff can only create admin or user roles"
+            return False, "staff_create_only"
     
     # admin can create admin and user
     if creator_normalized == 'admin':
         if target_normalized in ['admin', 'user']:
             return True, ""
         else:
-            return False, "admin can only create admin or user roles"
+            return False, "admin_create_only"
     
     # user cannot create anyone
     if creator_normalized == 'user':
-        return False, "user role cannot create other users"
+        return False, "user_cannot_create"
     
-    return False, f"Unknown creator role: {creator_role}"
+    return False, f"unknown_creator_role:{creator_role}"
 
 # --------------------------------------------------------------------------------
 # Validate role for user management
@@ -105,17 +106,17 @@ def can_manage_user(manager_role: str, target_user_role: str) -> Tuple[bool, str
         if target_normalized in ['admin', 'user']:
             return True, ""
         else:
-            return False, "staff can only manage admin or user"
+            return False, "staff_manage_only"
     
     # admin can manage admin and user
     if manager_normalized == 'admin':
         if target_normalized in ['admin', 'user']:
             return True, ""
         else:
-            return False, "admin can only manage admin or user"
+            return False, "admin_manage_only"
     
     # user can only manage self (checked in route)
-    return False, f"Insufficient permissions to manage {target_user_role}"
+    return False, f"insufficient_permissions:{target_user_role}"
 
 
 # ----------------------------------------------------------------------------------
@@ -150,12 +151,12 @@ def check_permission(user_role: str, resource_action: str) -> Tuple[bool, str]:
     allowed_roles = PERMISSIONS.get(resource_action, [])
     
     if not allowed_roles:
-        return False, f"Unknown permission: {resource_action}"
+        return False, f"unknown_permission:{resource_action}"
     
     if normalized_role in allowed_roles:
         return True, ""
     
-    return False, f"Permission denied. Required roles: {', '.join(allowed_roles)}"
+    return False, f"permission_required:{', '.join(allowed_roles)}"
 
 
 def require_permission(resource_action: str):
@@ -171,11 +172,12 @@ def require_permission(resource_action: str):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
+            locale = request.headers.get('Accept-Language', 'en')
             current_user = get_current_user()
             
             if not current_user:
                 return unauthorized_response(
-                    message="Authentication required",
+                    message=get_message('authentication_required', locale),
                     reason="not_authenticated"
                 ), 401
             
@@ -195,15 +197,27 @@ def require_permission(resource_action: str):
                     if str(target_user_id) == str(current_user.id_user):
                         return f(*args, **kwargs)
 
-            has_permission, reason = check_permission(current_user.role, resource_action)
+            has_permission, reason_key = check_permission(current_user.role, resource_action)
             
             if not has_permission:
                 current_app.logger.warning(
                     f"Permission denied: {current_user.email} (role: {current_user.role}) "
                     f"for action: {resource_action}"
                 )
+                # Parse reason_key for dynamic values (format: key:value)
+                if ':' in reason_key:
+                    key, value = reason_key.split(':', 1)
+                    if key == 'unknown_permission':
+                        message = get_message('unknown_permission', locale, action=value)
+                    elif key == 'permission_required':
+                        message = get_message('permission_required', locale, roles=value)
+                    else:
+                        message = get_message(key, locale)
+                else:
+                    message = get_message(reason_key, locale)
+                    
                 return unauthorized_response(
-                    message=reason,
+                    message=message,
                     reason="permission_denied"
                 ), 403
             
@@ -234,20 +248,30 @@ def validate_user_action(action_type: str):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            from flask import request, g
+            from flask import g
+            locale = request.headers.get('Accept-Language', 'en')
             current_user = get_current_user()
             
             if not current_user:
                 return unauthorized_response(
-                    message="Authentication required",
+                    message=get_message('authentication_required', locale),
                     reason="not_authenticated"
                 ), 401
             
             # Check base permission
-            has_permission, reason = check_permission(current_user.role, f'users:{action_type}')
+            has_permission, reason_key = check_permission(current_user.role, f'users:{action_type}')
             if not has_permission:
+                # Parse reason_key for dynamic values
+                if ':' in reason_key:
+                    key, value = reason_key.split(':', 1)
+                    if key == 'permission_required':
+                        message = get_message('permission_required', locale, roles=value)
+                    else:
+                        message = get_message(key, locale)
+                else:
+                    message = get_message(reason_key, locale)
                 return unauthorized_response(
-                    message=reason,
+                    message=message,
                     reason="permission_denied"
                 ), 403
             
@@ -256,14 +280,23 @@ def validate_user_action(action_type: str):
                 data = request.get_json() or {}
                 target_role = data.get('role', 'user')
                 
-                can_create, reason = can_create_role(current_user.role, target_role)
+                can_create, reason_key = can_create_role(current_user.role, target_role)
                 if not can_create:
                     current_app.logger.warning(
                         f"Role creation denied: {current_user.email} (role: {current_user.role}) "
-                        f"attempted to create {target_role}. Reason: {reason}"
+                        f"attempted to create {target_role}. Reason: {reason_key}"
                     )
+                    # Parse reason_key for dynamic values
+                    if ':' in reason_key:
+                        key, value = reason_key.split(':', 1)
+                        if key == 'unknown_creator_role':
+                            message = get_message('unknown_creator_role', locale, role=value)
+                        else:
+                            message = get_message(key, locale)
+                    else:
+                        message = get_message(reason_key, locale)
                     return unauthorized_response(
-                        message=reason,
+                        message=message,
                         reason="role_creation_denied"
                     ), 403
             
@@ -279,14 +312,23 @@ def validate_user_action(action_type: str):
                     if target_user:
                         # Allow users to manage themselves
                         if current_user.id_user != target_user_id:
-                            can_manage, reason = can_manage_user(current_user.role, target_user.role)
+                            can_manage, reason_key = can_manage_user(current_user.role, target_user.role)
                             if not can_manage:
                                 current_app.logger.warning(
                                     f"User management denied: {current_user.email} (role: {current_user.role}) "
                                     f"attempted to {action_type} user {target_user.email} (role: {target_user.role})"
                                 )
+                                # Parse reason_key for dynamic values
+                                if ':' in reason_key:
+                                    key, value = reason_key.split(':', 1)
+                                    if key == 'insufficient_permissions':
+                                        message = get_message('insufficient_permissions', locale, role=value)
+                                    else:
+                                        message = get_message(key, locale)
+                                else:
+                                    message = get_message(reason_key, locale)
                                 return unauthorized_response(
-                                    message=reason,
+                                    message=message,
                                     reason="user_management_denied"
                                 ), 403
             

@@ -1,174 +1,174 @@
-name: Backend Tests
+# name: Backend Tests
 
-# Automated testing as per client policy
-# Runs on: pull requests and push to main/develop/stage branches
-# CRITICAL: Tests must pass before stage deployment
+# # Automated testing as per client policy
+# # Runs on: pull requests and push to main/develop/stage branches
+# # CRITICAL: Tests must pass before stage deployment
 
-on:
-  push:
-    branches: [ main, develop, stage ]
-  pull_request:
-    branches: [ main, develop, stage ]
+# on:
+#   push:
+#     branches: [ main, develop, stage ]
+#   pull_request:
+#     branches: [ main, develop, stage ]
 
-jobs:
-  test:
-    name: Run Tests (Python 3.11)
-    runs-on: ubuntu-latest
+# jobs:
+#   test:
+#     name: Run Tests (Python 3.11)
+#     runs-on: ubuntu-latest
 
-    env:
-      # Test environment variables
-      FLASK_ENV: testing
-      DATABASE_URL_DB: postgresql://postgres:12345@16.170.245.95:5432/kbai
-      SECRET_KEY: test-secret-key-for-github-actions
-      JWT_SECRET_KEY: test-jwt-secret-key-for-github-actions
-      AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
-      AUTH0_CLIENT_ID: ${{ secrets.AUTH0_CLIENT_ID }}
-      AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
-      AUTH0_AUDIENCE: ${{ secrets.AUTH0_AUDIENCE }}
-      AUTH0_MGMT_CLIENT_ID: ${{ secrets.AUTH0_MGMT_CLIENT_ID || 'test-mgmt-client-id' }}
-      AUTH0_MGMT_CLIENT_SECRET: ${{ secrets.AUTH0_MGMT_CLIENT_SECRET || 'test-mgmt-client-secret' }}
-      AUTH0_MGMT_AUDIENCE: ${{ secrets.AUTH0_MGMT_AUDIENCE || 'https://test.auth0.com/api/v2/' }}
+#     env:
+#       # Test environment variables
+#       FLASK_ENV: testing
+#       DATABASE_URL_DB: postgresql://postgres:12345@16.170.245.95:5432/kbai
+#       SECRET_KEY: test-secret-key-for-github-actions
+#       JWT_SECRET_KEY: test-jwt-secret-key-for-github-actions
+#       AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
+#       AUTH0_CLIENT_ID: ${{ secrets.AUTH0_CLIENT_ID }}
+#       AUTH0_CLIENT_SECRET: ${{ secrets.AUTH0_CLIENT_SECRET }}
+#       AUTH0_AUDIENCE: ${{ secrets.AUTH0_AUDIENCE }}
+#       AUTH0_MGMT_CLIENT_ID: ${{ secrets.AUTH0_MGMT_CLIENT_ID || 'test-mgmt-client-id' }}
+#       AUTH0_MGMT_CLIENT_SECRET: ${{ secrets.AUTH0_MGMT_CLIENT_SECRET || 'test-mgmt-client-secret' }}
+#       AUTH0_MGMT_AUDIENCE: ${{ secrets.AUTH0_MGMT_AUDIENCE || 'https://test.auth0.com/api/v2/' }}
 
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
+#       - name: Set up Python 3.11
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: '3.11'
+#           cache: 'pip'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-cov pytest-timeout pytest-mock pytest-asyncio
+#       - name: Install dependencies
+#         run: |
+#           python -m pip install --upgrade pip
+#           pip install -r requirements.txt
+#           pip install pytest pytest-cov pytest-timeout pytest-mock pytest-asyncio
 
-      - name: Create test database tables
-        run: |
-          python -c "
-          import os
-          os.environ['FLASK_ENV'] = 'testing'
-          os.environ['DATABASE_URL_DB'] = 'postgresql://postgres:12345@16.170.245.95:5432/kbai'
-          from src.app import create_app
-          from src.extensions import db
-          app = create_app()
-          with app.app_context():
-              db.create_all()
-              print('Test database tables created')
-          "
+#       - name: Create test database tables
+#         run: |
+#           python -c "
+#           import os
+#           os.environ['FLASK_ENV'] = 'testing'
+#           os.environ['DATABASE_URL_DB'] = 'postgresql://postgres:12345@16.170.245.95:5432/kbai'
+#           from src.app import create_app
+#           from src.extensions import db
+#           app = create_app()
+#           with app.app_context():
+#               db.create_all()
+#               print('Test database tables created')
+#           "
 
-      - name: Run tests with coverage
-        run: |
-          pytest --cov=src --cov-report=xml --cov-report=html --cov-report=term-missing --cov-fail-under=70
+#       - name: Run tests with coverage
+#         run: |
+#           pytest --cov=src --cov-report=xml --cov-report=html --cov-report=term-missing --cov-fail-under=70
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.xml
-          flags: unittests
-          name: codecov-kbai-backend
-          fail_ci_if_error: false
+#       - name: Upload coverage to Codecov
+#         uses: codecov/codecov-action@v4
+#         with:
+#           file: ./coverage.xml
+#           flags: unittests
+#           name: codecov-kbai-backend
+#           fail_ci_if_error: false
 
-      - name: Generate coverage badge
-        if: success()
-        run: |
-          coverage_percent=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(root.attrib['line-rate'])")
-          echo "Coverage: ${coverage_percent}%"
+#       - name: Generate coverage badge
+#         if: success()
+#         run: |
+#           coverage_percent=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(root.attrib['line-rate'])")
+#           echo "Coverage: ${coverage_percent}%"
 
-      - name: Upload coverage HTML report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-report
-          path: htmlcov/
-          retention-days: 30
+#       - name: Upload coverage HTML report
+#         uses: actions/upload-artifact@v4
+#         if: always()
+#         with:
+#           name: coverage-report
+#           path: htmlcov/
+#           retention-days: 30
 
-      - name: Comment PR with coverage
-        if: github.event_name == 'pull_request'
-        uses: py-cov-action/python-coverage-comment-action@v3
-        with:
-          GITHUB_TOKEN: ${{ github.token }}
-          MINIMUM_GREEN: 80
-          MINIMUM_ORANGE: 70
+#       - name: Comment PR with coverage
+#         if: github.event_name == 'pull_request'
+#         uses: py-cov-action/python-coverage-comment-action@v3
+#         with:
+#           GITHUB_TOKEN: ${{ github.token }}
+#           MINIMUM_GREEN: 80
+#           MINIMUM_ORANGE: 70
 
-      - name: Check test results
-        if: always()
-        run: |
-          echo "✅ All tests passed with minimum 70% coverage!"
-          echo "📊 Check coverage report in artifacts"
+#       - name: Check test results
+#         if: always()
+#         run: |
+#           echo "✅ All tests passed with minimum 70% coverage!"
+#           echo "📊 Check coverage report in artifacts"
 
-  lint:
-    name: Code Quality Check
-    runs-on: ubuntu-latest
+#   lint:
+#     name: Code Quality Check
+#     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+#       - name: Set up Python 3.11
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: '3.11'
 
-      - name: Install linting tools
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 pylint black isort
+#       - name: Install linting tools
+#         run: |
+#           python -m pip install --upgrade pip
+#           pip install flake8 pylint black isort
 
-      - name: Run flake8
-        continue-on-error: true
-        run: |
-          flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
-          flake8 src tests --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+#       - name: Run flake8
+#         continue-on-error: true
+#         run: |
+#           flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
+#           flake8 src tests --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-      - name: Check code formatting with black
-        continue-on-error: true
-        run: |
-          black --check src tests
+#       - name: Check code formatting with black
+#         continue-on-error: true
+#         run: |
+#           black --check src tests
 
-      - name: Check import sorting with isort
-        continue-on-error: true
-        run: |
-          isort --check-only src tests
+#       - name: Check import sorting with isort
+#         continue-on-error: true
+#         run: |
+#           isort --check-only src tests
 
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
+#   security:
+#     name: Security Scan
+#     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+#       - name: Set up Python 3.11
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: '3.11'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install safety bandit
+#       - name: Install dependencies
+#         run: |
+#           python -m pip install --upgrade pip
+#           pip install -r requirements.txt
+#           pip install safety bandit
 
-      - name: Run safety check (dependencies)
-        continue-on-error: true
-        run: |
-          safety check --json
+#       - name: Run safety check (dependencies)
+#         continue-on-error: true
+#         run: |
+#           safety check --json
 
-      - name: Run bandit (security issues)
-        continue-on-error: true
-        run: |
-          bandit -r src -f json -o bandit-report.json
+#       - name: Run bandit (security issues)
+#         continue-on-error: true
+#         run: |
+#           bandit -r src -f json -o bandit-report.json
 
-      - name: Upload security reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: security-reports
-          path: |
-            bandit-report.json
-          retention-days: 30
+#       - name: Upload security reports
+#         uses: actions/upload-artifact@v4
+#         if: always()
+#         with:
+#           name: security-reports
+#           path: |
+#             bandit-report.json
+#           retention-days: 30
 

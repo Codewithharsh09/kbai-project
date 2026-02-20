@@ -12,6 +12,8 @@ from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
 import openpyxl
 from sqlalchemy import text
+from flask import current_app, request
+from src.common.localization import get_message
 
 from src.app.database.models import (
     KbaiBalance, 
@@ -23,12 +25,14 @@ from src.app.database.models import (
     KbaiAnalysis, 
     KbaiReport 
 )
+from src.app.database.models.kbai.kbai_companies import KbaiCompany
 from src.extensions import db
 from src.integrations.estrazione_bilancio import extract_balance_from_pdf, extract_text_from_pdf, extract_balance_from_xbrl, extract_text_from_xbrl, load_existing_json
 from src.integrations.excel_script import extract_bilancio_from_xlsx
 from src.integrations.excel_script_2 import extract_bilancio_abbreviato_from_xlsx
 from src.integrations.xls_date_format_extract import extract_balance_year, detect_excel_format
 # from src.app.api.v1.services.common.upload import FileUploadService
+from src.app.api.v1.services.k_balance.comparison_report_service import ComparisonReportService
 
 import logging
 logger = logging.getLogger(__name__)
@@ -106,7 +110,9 @@ class BalanceSheetService:
         - staff: Can access ALL companies
         - admin: Can access ONLY companies assigned to them (in tb_user_company)
         - user: Can access ONLY companies assigned to them (in tb_user_company)
+        - competitor company: admin/user can access if they are assigned to the competitor's parent_company_id
         """
+        locale = request.headers.get('Accept-Language', 'en')
         user_role = current_user.role.lower()
         
         # Superadmin and Staff have full access to all companies
@@ -115,7 +121,7 @@ class BalanceSheetService:
         
         # Admin and User can only access companies assigned to them
         if user_role in ['admin', 'user']:
-            # Check if user is assigned to this company
+            # 1) Direct assignment to this company
             user_company = TbUserCompany.query.filter_by(
                 id_user=current_user.id_user,
                 id_company=company_id
@@ -123,11 +129,33 @@ class BalanceSheetService:
             
             if user_company:
                 return True, ""
-            else:
-                return False, f"You do not have access to company {company_id}. Only companies assigned to you can be accessed."
+
+            # 2) Competitor flow: allow if assigned to parent_company_id
+            competitor_company = KbaiCompany.query.filter_by(
+                id_company=company_id,
+                is_competitor=True,
+                is_deleted=False
+            ).first()
+
+            if competitor_company:
+                parent_company_id = competitor_company.parent_company_id
+                if not parent_company_id:
+                    return False, get_message('invalid_competitor_company_msg', locale)
+
+                parent_user_company = TbUserCompany.query.filter_by(
+                    id_user=current_user.id_user,
+                    id_company=parent_company_id
+                ).first()
+
+                if parent_user_company:
+                    return True, ""
+
+                return False, get_message('competitor_access_denied_msg', locale, parent_company_id=parent_company_id)
+
+            return False, get_message('company_access_denied_msg', locale, company_id=company_id)
         
         # Unknown role
-        return False, f"Unknown user role: {user_role}"
+        return False, get_message('unknown_user_role', locale, user_role=user_role)
     
     def _extract_period_from_file(
         self,
@@ -309,10 +337,11 @@ class BalanceSheetService:
             file_type: Type of file for error messages (e.g., "PDF", "XBRL")
         """
         # Only validate year if we successfully extracted a year from the file.
+        locale = request.headers.get('Accept-Language', 'en')
         if pdf_year is not None and pdf_year != payload_year:
             return {
-                'error': 'Validation error',
-                'message': f"Year mismatch. {file_type} reports {pdf_year} while payload contains {payload_year}."
+                'error': get_message('validation_error', locale),
+                'message': get_message('year_mismatch', locale, file_type=file_type, pdf_year=pdf_year, payload_year=payload_year)
             }, 400
 
         # Only validate month when both payload and extracted month are available.
@@ -320,8 +349,8 @@ class BalanceSheetService:
         # incorrectly rejecting valid uploads due to parsing limitations.
         if payload_month is not None and pdf_month is not None and pdf_month != payload_month:
             return {
-                'error': 'Validation error',
-                'message': f"Month mismatch. {file_type} reports {pdf_month} while payload contains {payload_month}."
+                'error': get_message('validation_error', locale),
+                'message': get_message('month_mismatch', locale, file_type=file_type, pdf_month=pdf_month, payload_month=payload_month)
             }, 400
 
         return None
@@ -348,13 +377,14 @@ class BalanceSheetService:
                 .first()
             )
         except Exception as query_error:
+            locale = request.headers.get('Accept-Language', 'en')
             logger.error(
                 "Error while checking for existing balance sheets: %s",
                 str(query_error)
             )
             return None, ({
-                'error': 'Database error',
-                'message': 'Failed to verify existing balance sheets'
+                'error': get_message('database_error', locale),
+                'message': get_message('verification_failed_msg', locale)
             }, 500)
 
         if existing_balance and existing_balance.is_deleted is True:
@@ -365,33 +395,154 @@ class BalanceSheetService:
             )
 
         return existing_balance, None
-
-    def _soft_delete_balance(
-        self,
-        balance: KbaiBalance
-    ) -> Optional[Tuple[Dict[str, Any], int]]:
-        """
-        Soft delete an active balance sheet so a new one can be created in its place.
-        """
-        if balance.is_deleted is True:
+    
+    # Soft delete method for balance sheets(not currently used, but kept for reference), also deletes related benchmark data
+    def _soft_delete_balance(self, balance: KbaiBalance):
+        if balance.is_deleted:
+            logger.info(
+                "Skip soft delete: balance already deleted (id_balance=%s)",
+                balance.id_balance
+            )
             return None
+
+        logger.info(
+            "Starting soft delete for balance | id=%s | year=%s | month=%s",
+            balance.id_balance,
+            getattr(balance, "year", None),
+            getattr(balance, "month", None)
+        )
 
         balance.is_deleted = True
         balance.deleted_at = datetime.utcnow()
 
         try:
+            benchmark_balance_types = [
+                "balanceSheetToCompare",
+                "comparitiveBalancesheet",
+                "referenceBalanceSheet"
+            ]
+
+            # 1. Find benchmark analyses using this balance
+            raw_analysis_ids = (
+                db.session.query(KbaiAnalysisKpi.id_analysis)
+                .filter(
+                    KbaiAnalysisKpi.id_balance == balance.id_balance,
+                    KbaiAnalysisKpi.kpi_list_json["balance_type"].astext.in_(benchmark_balance_types)
+                )
+                .distinct()
+                .all()
+            )
+
+            analysis_ids = [a[0] for a in raw_analysis_ids]
+
+            # 1.5. Also find competitor analyses using this balance
+            raw_competitor_analysis_ids = (
+                db.session.query(KbaiAnalysisKpi.id_analysis)
+                .filter(
+                    KbaiAnalysisKpi.id_balance == balance.id_balance,
+                    KbaiAnalysisKpi.kpi_list_json["balance_type"].astext == "competitor"
+                )
+                .distinct()
+                .all()
+            )
+
+            competitor_analysis_ids = [a[0] for a in raw_competitor_analysis_ids]
+            
+            # Combine both benchmark and competitor analysis IDs
+            all_analysis_ids = list(set(analysis_ids + competitor_analysis_ids))
+
+            logger.info(
+                "Balance id=%s is used in %d benchmark analyses: %s and %d competitor analyses: %s",
+                balance.id_balance,
+                len(analysis_ids),
+                analysis_ids,
+                len(competitor_analysis_ids),
+                competitor_analysis_ids
+            )
+
+            if not all_analysis_ids:
+                logger.info(
+                    "No benchmark or competitor analyses found for balance id=%s. Only soft delete applied.",
+                    balance.id_balance
+                )
+
+            if all_analysis_ids:
+                # 2. Delete reports
+                result = db.session.execute(
+                    text("""
+                        DELETE FROM kbai_balance.kbai_reports
+                        WHERE id_analysis IN :analysis_ids
+                    """),
+                    {"analysis_ids": tuple(all_analysis_ids)}
+                )
+                logger.info(
+                    "Deleted %d rows from kbai_reports for analyses %s",
+                    result.rowcount,
+                    all_analysis_ids
+                )
+
+                # 3. Delete analysis KPI info
+                result = db.session.execute(
+                    text("""
+                        DELETE FROM kbai_balance.analysis_kpi_info
+                        WHERE id_analysis IN :analysis_ids
+                    """),
+                    {"analysis_ids": tuple(all_analysis_ids)}
+                )
+                logger.info(
+                    "Deleted %d rows from analysis_kpi_info for analyses %s",
+                    result.rowcount,
+                    all_analysis_ids
+                )
+
+                # 4. Delete analysis KPIs
+                result = db.session.execute(
+                    text("""
+                        DELETE FROM kbai_balance.kbai_analysis_kpi
+                        WHERE id_analysis IN :analysis_ids
+                    """),
+                    {"analysis_ids": tuple(all_analysis_ids)}
+                )
+                logger.info(
+                    "Deleted %d rows from kbai_analysis_kpi for analyses %s",
+                    result.rowcount,
+                    all_analysis_ids
+                )
+
+                # 5. Delete analyses
+                result = db.session.execute(
+                    text("""
+                        DELETE FROM kbai_balance.kbai_analysis
+                        WHERE id_analysis IN :analysis_ids
+                    """),
+                    {"analysis_ids": tuple(all_analysis_ids)}
+                )
+                logger.info(
+                    "Deleted %d rows from kbai_analysis for analyses %s",
+                    result.rowcount,
+                    all_analysis_ids
+                )
+
             db.session.add(balance)
             db.session.commit()
-        except Exception as soft_delete_error:
-            logger.error(
-                "Failed to soft delete existing balance sheet (id=%s): %s",
-                balance.id_balance,
-                str(soft_delete_error)
+
+            logger.info(
+                "Soft delete completed successfully for balance id=%s",
+                balance.id_balance
             )
+
+        except Exception as e:
+            locale = request.headers.get('Accept-Language', 'en')
             db.session.rollback()
+            logger.error(
+                "Soft delete FAILED for balance id=%s | error=%s",
+                balance.id_balance,
+                str(e),
+                exc_info=True
+            )
             return {
-                'error': 'Database error',
-                'message': 'Failed to mark existing balance sheet as deleted'
+                "error": get_message('database_error', locale),
+                "message": get_message('delete_failed_msg', locale)
             }, 500
 
         return None
@@ -531,14 +682,15 @@ class BalanceSheetService:
             return None
             
         except Exception as delete_error:
+            locale = request.headers.get('Accept-Language', 'en')
             logger.error(
                 f"Error hard deleting balances and related data: {str(delete_error)}",
                 exc_info=True
             )
             db.session.rollback()
             return {
-                'error': 'Database error',
-                'message': f'Failed to delete existing balance sheets: {str(delete_error)}'
+                'error': get_message('database_error', locale),
+                'message': get_message('delete_existing_failed_msg', locale, error=str(delete_error))
             }, 500
 
     def balance_sheet(
@@ -572,28 +724,29 @@ class BalanceSheetService:
         """
         temp_file_path = None
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # Step 0: Check company access if current_user is provided
             if current_user:
                 has_access, error_msg = self.check_company_access(current_user, company_id)
                 if not has_access:
                     return {
-                        'error': 'Permission denied',
+                        'error': get_message('permission_denied', locale),
                         'message': error_msg
                     }, 403
             
             # Step 1: Validate inputs
             if not file or not file.filename:
                 return {
-                    'error': 'Validation error',
-                    'message': 'File is required'
+                    'error': get_message('validation_error', locale),
+                    'message': get_message('file_required', locale)
                 }, 400
             
             # Check file extension
             file_ext = file.filename.lower().split('.')[-1] if '.' in file.filename else ''
             if file_ext not in ['pdf', 'xlsx', 'xbrl', 'xml']:
                 return {
-                    'error': 'Validation error',
-                    'message': 'Only PDF, XLSX, and XBRL/XML files are allowed'
+                    'error': get_message('validation_error', locale),
+                    'message': get_message('invalid_file_type', locale)
                 }, 400
             
             # mode and file extension consistency check
@@ -612,8 +765,8 @@ class BalanceSheetService:
             # Check if mode is valid
             if mode_lower not in mode_file_mapping:
                 return {
-                    'error': 'Validation error',
-                    'message': f'Invalid mode: {mode}. Valid modes are: pdf, xlsx, xbrl, xml, manual'
+                    'error': get_message('validation_error', locale),
+                    'message': get_message('invalid_mode', locale, mode=mode)
                 }, 400
                 
            
@@ -623,21 +776,21 @@ class BalanceSheetService:
                 # Get the expected file type name for better error message
                 mode_display = mode_lower.upper() if mode_lower in ['pdf', 'xlsx', 'xbrl', 'xml'] else mode_lower
                 return {
-                    'error': 'Validation error',
-                    'message': f'Mode is set to "{mode_display}" but uploaded file is {file_ext.upper()}. Please upload a {mode_display} file or change the mode.'
+                    'error': get_message('validation_error', locale),
+                    'message': get_message('mode_mismatch', locale, mode_display=mode_display, file_ext=file_ext.upper())
                 }, 400
             # Validate year and month
             if not isinstance(year, int) or year < 1900 or year > 2100:
                 return {
-                    'error': 'Validation error',
-                    'message': 'Invalid year. Must be between 1900 and 2100'
+                    'error': get_message('validation_error', locale),
+                    'message': get_message('invalid_year', locale)
                 }, 400   
                  
             if month is not None :
                 if not isinstance(month, int) or month < 1 or month > 12:
                     return {
-                    'error': 'Validation error',
-                    'message': 'Invalid month. Must be between 1 and 12'
+                    'error': get_message('validation_error', locale),
+                    'message': get_message('invalid_month', locale)
                     }, 400
 
             # Step 2: Save file temporarily
@@ -666,24 +819,24 @@ class BalanceSheetService:
                         balance_json = extract_bilancio_abbreviato_from_xlsx(temp_file_path)
                     else:
                         return {
-                            "error": "Unknown Excel format",
-                            "message": "Could not determine matching script for this XLSX file"
+                            "error": get_message('unknown_excel_format', locale),
+                            "message": get_message('excel_script_error', locale)
                         }, 400
                 elif file_ext in ['xbrl', 'xml']:
                     balance_json = extract_balance_from_xbrl(temp_file_path)
                     logger.info("Balance data extracted successfully from XBRL")
                 else:
                     return {
-                        'error': 'Validation error',
-                        'message': f'Unsupported file type: {file_ext}'
+                        'error': get_message('validation_error', locale),
+                        'message': get_message('unsupported_file_type', locale, file_ext=file_ext)
                     }, 400
                 
                 logger.info(f"Extracted balance data keys: {list(balance_json.keys()) if isinstance(balance_json, dict) else 'Not a dict'}")
             except Exception as e:
                 logger.error(f"Error extracting balance data: {str(e)}")
                 return {
-                    'error': 'Extraction error',
-                    'message': f'Failed to extract data from {file_ext.upper()}: {str(e)}'
+                    'error': get_message('extraction_error', locale),
+                    'message': get_message('extraction_failed_msg', locale, file_ext=file_ext.upper(), error=str(e))
                 }, 500
 
             # Step 4: Extract and validate period (for PDF and XBRL, Excel doesn't have text extraction)
@@ -715,8 +868,8 @@ class BalanceSheetService:
             if existing_balance and existing_balance.is_deleted is not True:
                 if not overwrite:
                     return {
-                        'error': 'Validation error',
-                        'message': 'Balance sheet already exists.'
+                        'error': get_message('validation_error', locale),
+                        'message': get_message('balance_sheet_exists', locale)
                     }, 400
 
                 # Hard delete ALL existing balances (including soft-deleted) and related data
@@ -792,7 +945,7 @@ class BalanceSheetService:
                 logger.error(f"Error creating balance record: {error}")
                 return {
                     'error': f"Database error {error}",
-                    'message': 'Failed to save balance record',
+                    'message': get_message('save_balance_failed', locale),
                 }, 500
             
             logger.info(f"Balance record created: {balance.id_balance}")
@@ -807,7 +960,17 @@ class BalanceSheetService:
                     newly_uploaded_balance_id=balance.id_balance,
                     newly_uploaded_year=year
                 )
-                
+                result = auto_comparison_result or {}
+                if result.get('auto_generated'):
+                    logger.info(
+                        f"Comparison report auto-generated after balance sheet upload. "
+                        f"Analysis ID: {result.get('data', {}).get('id_analysis', 'N/A')}"
+                    )
+                else:
+                    logger.info(
+                        f"Comparison report not auto-generated: {result.get('message', 'Unknown reason')}. " 
+                        f"KPIs calculated: {result.get('data', {}).get('kpis_calculated', False)}"
+                    )
                 if auto_comparison_result.get('auto_generated'):
                     logger.info(
                         f"Comparison report auto-generated after balance sheet upload. "
@@ -835,7 +998,7 @@ class BalanceSheetService:
             
             # Step 8: Return response
             return {
-                'message': 'Balance sheet uploaded successfully.',
+                'message': get_message('balance_sheet_uploaded_success', locale),
                 'data': {"balance_id": balance.id_balance},
                 'success': True
             }, 201
@@ -852,7 +1015,7 @@ class BalanceSheetService:
             
             return {
                 'error': 'Internal server error',
-                'message': 'Failed to upload balance sheet'
+                'message': get_message('balance_sheet_upload_failed', locale)
             }, 500
     
     def get_by_company_id(
@@ -874,20 +1037,21 @@ class BalanceSheetService:
             Tuple of (response_data, status_code)
         """
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # Check company access if current_user is provided
             if current_user:
                 has_access, error_msg = self.check_company_access(current_user, company_id)
                 if not has_access:
                     return {
-                        'error': 'Permission denied',
+                        'error': get_message('permission_denied', locale),
                         'message': error_msg
                     }, 403
             
             # Validate company_id
             if not company_id or company_id <= 0:
                 return {
-                    'error': 'Validation error',
-                    'message': 'Valid company_id is required'
+                    'error': get_message('validation_error', locale),
+                    'message': get_message('valid_company_id_required', locale)
                 }, 400
             
             # Query balance sheets for company
@@ -900,8 +1064,8 @@ class BalanceSheetService:
             if error:
                 logger.error(f"Error querying balance sheets: {error}")
                 return {
-                    'error': 'Database error',
-                    'message': 'Failed to retrieve balance sheets'
+                    'error': get_message('database_error', locale),
+                    'message': get_message('balance_sheets_retrieve_failed', locale)
                 }, 500
             
             # Convert to dict and exclude balance field
@@ -918,7 +1082,7 @@ class BalanceSheetService:
             logger.info(f"Retrieved {len(balance_sheets)} balance sheets for company {company_id}")
             
             return {
-                'message': 'Balance sheets retrieved successfully',
+                'message': get_message('balance_sheets_retrieved_success', locale),
                 'data': balance_sheets,
                 'pagination': {
                     'page': page,
@@ -931,9 +1095,10 @@ class BalanceSheetService:
             
         except Exception as e:
             logger.error(f"Error in get_by_company_id: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
                 'error': 'Internal server error',
-                'message': 'Failed to retrieve balance sheets'
+                'message': get_message('balance_sheets_retrieve_failed', locale)
             }, 500
     
     def get_by_id(
@@ -952,11 +1117,12 @@ class BalanceSheetService:
             Tuple of (response_data, status_code)
         """
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # Validate id_balance
             if not id_balance or id_balance <= 0:
                 return {
-                    'error': 'Validation error',
-                    'message': 'Valid id_balance is required'
+                    'error': get_message('validation_error', locale),
+                    'message': get_message('valid_balance_id_required', locale)
                 }, 400
             
             # First, check company access if current_user is provided
@@ -968,7 +1134,7 @@ class BalanceSheetService:
                     logger.warning(f"Balance sheet not found: {id_balance}")
                     return {
                         'error': 'Not found',
-                        'message': f'Balance sheet with ID {id_balance} not found'
+                        'message': get_message('balance_sheet_id_not_found', locale, id_balance=id_balance)
                     }, 404
                 
                 company_id = balance.id_company
@@ -977,7 +1143,7 @@ class BalanceSheetService:
                 has_access, error_msg = self.check_company_access(current_user, company_id)
                 if not has_access:
                     return {
-                        'error': 'Permission denied',
+                        'error': get_message('permission_denied', locale),
                         'message': error_msg
                     }, 403
             
@@ -988,23 +1154,24 @@ class BalanceSheetService:
                 logger.warning(f"Balance sheet not found: {id_balance}")
                 return {
                     'error': 'Not found',
-                    'message': f'Balance sheet with ID {id_balance} not found'
+                    'message': get_message('balance_sheet_id_not_found', locale, id_balance=id_balance)
                 }, 404
             
             # Return complete data including balance field
             logger.info(f"Retrieved balance sheet: {id_balance}")
             
             return {
-                'message': 'Balance sheet retrieved successfully',
+                'message': get_message('balance_sheet_retrieved_success', locale),
                 'data': balance.to_dict(),
                 'success': True
             }, 200
             
         except Exception as e:
+            locale = request.headers.get('Accept-Language', 'en')
             logger.error(f"Error in get_by_id: {str(e)}")
             return {
                 'error': 'Internal server error',
-                'message': 'Failed to retrieve balance sheet'
+                'message': get_message('balance_sheet_retrieve_failed', locale)
             }, 500
     
     def delete(
@@ -1025,6 +1192,7 @@ class BalanceSheetService:
             Tuple of (response_data, status_code)
         """
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # First, check company access if current_user is provided
             # Fetch only company_id to minimize data exposure
             if current_user:
@@ -1036,24 +1204,24 @@ class BalanceSheetService:
                     logger.warning(f"Balance sheet not found: {id_balance}")
                     return {
                         'error': 'Not found',
-                        'message': f'Balance sheet with ID {id_balance} not found'
+                        'message': get_message('balance_sheet_id_not_found', locale, id_balance=id_balance)
                     }, 404
                 
                 balance_company_id = company_id_result[0]
                 
                 # Check company access immediately before fetching full balance
-                has_access, error_msg = self.check_company_access(current_user, balance_company_id)
+                has_access, error_msg = ComparisonReportService().check_company_access(current_user, balance_company_id)
                 if not has_access:
                     return {
-                        'error': 'Permission denied',
+                        'error': get_message('permission_denied', locale),
                         'message': error_msg
                     }, 403
                 
                 # Validate balance belongs to company_id if provided
                 if company_id and balance_company_id != company_id:
                     return {
-                        'error': 'Validation error',
-                        'message': f'Balance sheet {id_balance} does not belong to company {company_id}'
+                        'error': get_message('validation_error', locale),
+                        'message': get_message('balance_does_not_belong', locale, id_balance=id_balance, company_id=company_id)
                     }, 400
             
             # Query balance sheet by ID
@@ -1063,14 +1231,14 @@ class BalanceSheetService:
                 logger.warning(f"Balance sheet not found")
                 return {
                     'error': 'Not found',
-                    'message': f'Balance sheet not found'
+                    'message': get_message('balance_sheet_not_found', locale)
                 }, 404
             
             # Check if already deleted
             if balance.is_deleted is True:
                 return {
-                    'error': 'Already deleted',
-                    'message': f'Balance sheet is already deleted'
+                    'error': get_message('already_deleted', locale),
+                    'message': get_message('balance_sheet_already_deleted', locale)
                 }, 400
             
             # Use existing soft delete method
@@ -1113,15 +1281,16 @@ class BalanceSheetService:
                 )
             
             return {
-                'message': 'Balance sheet deleted successfully',
+                'message': get_message('balance_sheet_deleted_success', locale),
                 'success': True
             }, 200
             
         except Exception as e:
+            locale = request.headers.get('Accept-Language', 'en')
             logger.error(f"Error in delete: {str(e)}")
             return {
                 'error': 'Internal server error',
-                'message': 'Failed to delete balance sheet'
+                'message': get_message('balance_sheet_delete_failed', locale)
             }, 500
 
 # Create service instance

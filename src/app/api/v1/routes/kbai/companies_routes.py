@@ -9,9 +9,11 @@ Contains API endpoints for KBAI companies operations:
 - GET /api/v1/kbai/companies/user/{tb_user_id} - Get companies for specific user
 """
 
+from flask import request, make_response, jsonify
+from flask_restx import Resource, marshal
+from marshmallow import ValidationError
 from flask import request
 from flask_restx import Resource
-from marshmallow import ValidationError
 
 from src.app.api.v1.services import kbai_companies_service
 from src.app.api.schemas import create_company_schema, update_company_schema
@@ -21,6 +23,7 @@ from src.common.response_utils import (
     success_response, error_response, validation_error_response,
     unauthorized_response, internal_error_response, not_found_response
 )
+from src.common.localization import get_message
 from src.app.api.v1.swaggers import (
     kbai_companies_ns,
     create_company_model,
@@ -47,7 +50,6 @@ class CompaniesList(Resource):
     # Create a new company
     # -------------------------------------------------------------------------
     @kbai_companies_ns.expect(create_company_model)
-    @kbai_companies_ns.marshal_with(company_response_model, code=201)
     @kbai_companies_ns.doc('create_company', responses={
         201: ('Company created successfully', company_response_model),
         400: ('Validation error', validation_error_model),
@@ -65,27 +67,39 @@ class CompaniesList(Resource):
         - admin: Can create companies
         - user: Cannot create companies (403)
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
-            
             data = request.get_json()
             
             if not data:
-                return error_response(
-                    message="Request body is required",
+                resp, code = error_response(
+                    message=get_message('request_body_required', locale),
                     status_code=400
                 )
+                return make_response(jsonify(resp), code)
             
             # Validate data using Marshmallow schema
             try:
                 validated_data = create_company_schema.load(data)
             except ValidationError as e:
-                return validation_error_response(
-                    message="Validation error",
-                    errors=e.messages
+                resp, code = validation_error_response(
+                    message=get_message('validation_error', locale),
+                    validation_errors=e.messages
                 )
-            
+                return make_response(jsonify(resp), code)
+
+            vat_value = validated_data.get('vat')
+            if vat_value:
+                vat = KbaiCompany.query.filter_by(vat=vat_value,is_deleted=False).first()
+                if vat:
+                    resp, code = error_response(
+                        message=get_message('company_already_exists', locale),
+                        status_code=400
+                    )
+                    return make_response(jsonify(resp), code)
+
             # Call service to create company with validated data and current user
             result, status_code = kbai_companies_service.create(
                 validated_data, 
@@ -93,23 +107,31 @@ class CompaniesList(Resource):
             )
             
             if status_code == 201:
-                return success_response(
-                    message=result['message'],
-                    data=result['data'],
-                    status_code=status_code
-                )
+                # result already contains message and data from service.create
+                response_data = {
+                    "success": True,
+                    "message": result.get('message'),
+                    "data": result.get('data')
+                }
+                # Manually marshal only the dictionary data
+                return marshal(response_data, company_response_model), 201
             else:
-                return error_response(
-                    message=result.get('message', 'Failed to create company'),
+                if isinstance(result, dict) and 'success' in result and 'message' in result:
+                    return make_response(jsonify(result), status_code)
+                    
+                resp, code = error_response(
+                    message=get_message('company_create_failed', locale),
                     data=result,
                     status_code=status_code
                 )
+                return make_response(jsonify(resp), code)
                 
         except Exception as e:
-            return internal_error_response(
-                message="Internal server error",
-                error=str(e)
+            resp, code = internal_error_response(
+                message=get_message('internal_server_error', locale),
+                error_details=str(e)
             )
+            return make_response(jsonify(resp), code)
     
     # -------------------------------------------------------------------------
     # Get all companies (superadmin/staff)
@@ -133,12 +155,13 @@ class CompaniesList(Resource):
         - superadmin/staff: full access
         - others: must use /user/{tb_user_id}
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             current_user = get_current_user()
 
             if current_user.role.lower() not in ['superadmin', 'staff']:
                 return error_response(
-                    message="Permission denied. Use /user/{tb_user_id} endpoint to get your companies.",
+                    message=get_message('permission_denied_use_user_endpoint', locale),
                     status_code=403
                 )
 
@@ -169,14 +192,14 @@ class CompaniesList(Resource):
                 )
 
             return error_response(
-                message=result.get('message', 'Failed to retrieve companies'),
+                message=get_message('companies_retrieve_failed', locale),
                 data=result,
                 status_code=status_code
             )
 
         except Exception as e:
             return internal_error_response(
-                message="Internal server error",
+                message=get_message('internal_server_error', locale),
                 error=str(e)
             )
 
@@ -191,7 +214,6 @@ class CompanyDetail(Resource):
     # -------------------------------------------------------------------------
     # Get one company
     # -------------------------------------------------------------------------
-    @kbai_companies_ns.marshal_with(company_response_model, code=200)
     @kbai_companies_ns.doc('get_company', responses={
         200: ('Company retrieved successfully', company_response_model),
         404: ('Company not found', not_found_error_model),
@@ -199,35 +221,36 @@ class CompanyDetail(Resource):
     })
     def get(self, company_id):
         """Get company by ID"""
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Call service to find one company
             result, status_code = kbai_companies_service.findOne(company_id)
             
             if status_code == 200:
-                # Return direct data without double wrapping
-                return {
+                # Manually marshal the response to maintain the API contract
+                response_data = {
                     'message': result['message'],
                     'data': result['data'],
                     'success': result['success']
-                }, status_code
+                }
+                return marshal(response_data, company_response_model), 200
             else:
                 return error_response(
-                    message=result.get('message', 'Failed to retrieve company'),
+                    message=get_message('company_retrieve_failed', locale),
                     data=result,
                     status_code=status_code
                 )
                 
         except Exception as e:
             return internal_error_response(
-                message="Internal server error",
-                error=str(e)
+                message=get_message('internal_server_error', locale),
+                error_details=str(e)
             )
     
     # -------------------------------------------------------------------------
     # Update one company
     # -------------------------------------------------------------------------
     @kbai_companies_ns.expect(update_company_model)
-    @kbai_companies_ns.marshal_with(company_response_model, code=200)
     @kbai_companies_ns.doc('update_company', responses={
         200: ('Company updated successfully', company_response_model),
         404: ('Company not found', not_found_error_model),
@@ -247,6 +270,7 @@ class CompanyDetail(Resource):
         - child admin: Can update only companies they created
         - user: Cannot update companies (403)
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
@@ -255,7 +279,7 @@ class CompanyDetail(Resource):
             
             if not data:
                 return error_response(
-                    message="Request body is required",
+                    message=get_message('request_body_required', locale),
                     status_code=400
                 )
             
@@ -264,8 +288,8 @@ class CompanyDetail(Resource):
                 validated_data = update_company_schema.load(data)
             except ValidationError as e:
                 return validation_error_response(
-                    message="Validation error",
-                    errors=e.messages
+                    message=get_message('validation_error', locale),
+                    validation_errors=e.messages
                 )
             
             # Call service to update company with validated data and current user
@@ -276,22 +300,26 @@ class CompanyDetail(Resource):
             )
             
             if status_code == 200:
-                # Return direct data without double wrapping
-                return {
+                # Manually marshal the response to maintain the API contract
+                response_data = {
                     'message': result['message'],
                     'data': result['data'],
                     'success': result['success']
-                }, status_code
+                }
+                return marshal(response_data, company_response_model), 200
             else:
+                if isinstance(result, dict) and 'success' in result and 'message' in result:
+                    return make_response(jsonify(result), status_code)
+                    
                 return error_response(
-                    message=result.get('message', 'Failed to update company'),
+                    message=get_message('company_update_failed', locale),
                     data=result,
                     status_code=status_code
                 )
                 
         except Exception as e:
             return internal_error_response(
-                message="Internal server error",
+                message=get_message('internal_server_error', locale),
                 error=str(e)
             )
     
@@ -316,6 +344,7 @@ class CompanyDetail(Resource):
         - child admin: Can delete only companies they created
         - user: Cannot delete companies (403)
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
@@ -334,14 +363,14 @@ class CompanyDetail(Resource):
                 )
             else:
                 return error_response(
-                    message=result.get('message', 'Failed to delete company'),
+                    message=get_message('company_delete_failed', locale),
                     data=result,
                     status_code=status_code
                 )
                 
         except Exception as e:
             return internal_error_response(
-                message="Internal server error",
+                message=get_message('internal_server_error', locale),
                 error=str(e)
             )
 
@@ -376,6 +405,7 @@ class CompaniesByUser(Resource):
         - admin: Can ONLY get their own companies (current_user_id must match tb_user_id)
         - user: Can ONLY get their own companies (current_user_id must match tb_user_id)
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
@@ -390,17 +420,17 @@ class CompaniesByUser(Resource):
                 # Admin and User can ONLY get their own companies
                 if current_user_id != tb_user_id:
                     return error_response(
-                        message=f"Permission denied. {current_user_role.capitalize()}s can only access their own companies.",
+                        message=get_message('permission_denied_own_companies', locale, role=current_user_role.capitalize()),
                         data={
                             'current_user_id': current_user_id,
                             'requested_user_id': tb_user_id,
-                            'reason': f'{current_user_role.capitalize()} cannot access other users\' companies'
+                            'reason': get_message('cannot_access_others_companies', locale, role=current_user_role.capitalize())
                         },
                         status_code=403
                     )
             else:
                 return error_response(
-                    message="Permission denied",
+                    message=get_message('permission_denied', locale),
                     status_code=403
                 )
             
@@ -408,7 +438,7 @@ class CompaniesByUser(Resource):
             target_user = TbUser.findOne(id_user=tb_user_id)
             if not target_user:
                 return error_response(
-                    message=f"User with ID {tb_user_id} not found",
+                    message=get_message('user_not_found_id', locale, id=tb_user_id),
                     status_code=404
                 )
             
@@ -437,14 +467,14 @@ class CompaniesByUser(Resource):
                 }, status_code
             else:
                 return error_response(
-                    message=result.get('message', 'Failed to retrieve user companies'),
+                    message=get_message('user_companies_retrieve_failed', locale),
                     data=result,
                     status_code=status_code
                 )
                 
         except Exception as e:
             return internal_error_response(
-                message="Internal server error",
+                message=get_message('internal_server_error', locale),
                 error=str(e)
             )
 
@@ -475,6 +505,7 @@ class CompaniesDropdownList(Resource):
         - admin: Can ONLY get their own companies (current_user_id must match tb_user_id)
         - user: NO ACCESS to this endpoint (403 error)
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
@@ -489,26 +520,26 @@ class CompaniesDropdownList(Resource):
                 # Admin can ONLY get their own companies
                 if current_user_id != tb_user_id:
                     return error_response(
-                        message=f"Permission denied. Admins can only access their own companies.",
+                        message=get_message('admin_own_companies_only', locale),
                         data={
                             'current_user_id': current_user_id,
                             'requested_user_id': tb_user_id,
-                            'reason': 'Admin cannot access other admins\' companies'
+                            'reason': get_message('admin_cannot_access_others', locale)
                         },
                         status_code=403
                     )
             elif current_user_role == 'user':
                 # User role has NO ACCESS to this endpoint
                 return error_response(
-                    message="Permission denied. Users cannot access company lists.",
+                    message=get_message('user_no_access_company_lists', locale),
                     data={
-                        'reason': 'User role does not have permission to access company lists'
+                        'reason': get_message('user_role_no_permission', locale)
                     },
                     status_code=403
                 )
             else:
                 return error_response(
-                    message="Permission denied",
+                    message=get_message('permission_denied', locale),
                     status_code=403
                 )
             
@@ -516,7 +547,7 @@ class CompaniesDropdownList(Resource):
             target_user = TbUser.findOne(id_user=tb_user_id)
             if not target_user:
                 return error_response(
-                    message=f"User with ID {tb_user_id} not found",
+                    message=get_message('user_not_found_id', locale, id=tb_user_id),
                     status_code=404
                 )
             
@@ -534,14 +565,81 @@ class CompaniesDropdownList(Resource):
                 }, status_code
             else:
                 return error_response(
-                    message=result.get('message', 'Failed to retrieve companies'),
+                    message=get_message('companies_retrieve_failed', locale),
                     data=result,
                     status_code=status_code
                 )
                 
         except Exception as e:
             return internal_error_response(
-                message="Internal server error",
+                message=get_message('internal_server_error', locale),
                 error=str(e)
             )
 
+# -----------------------------------------------------------------------------
+# Companies by User ID - Get companies assigned to specific user
+# -----------------------------------------------------------------------------
+@kbai_companies_ns.route('/company/competitor/<int:id_company>')
+class CompetitorCompanies(Resource):
+    """Handle getting competitor companies for a specific parent company"""
+    
+    # @kbai_companies_ns.marshal_with(user_companies_response_model, code=200)
+    @kbai_companies_ns.doc('list_competitor_companies', params={
+        'id_company': 'Parent company ID to get companies for',
+        'search': 'Search term for company name, contact person, or email',
+        'status': 'Filter by status flag (ACTIVE, INACTIVE, SUSPENDED)'
+    }, responses={
+        200: ('Competitor companies retrieved successfully', user_companies_response_model),
+        403: ('Permission denied - parent company can only access own competitor companies', validation_error_model),
+        404: ('Parent company not found', not_found_error_model),
+        500: ('Internal server error', internal_error_model)
+    })
+    @require_auth0
+    def get(self,id_company: int): # current_user is the current user object
+        """
+        Get competitor companies with role-based access control
+        
+        Access Rules:
+        - superadmin/staff: Can get companies for ANY user
+        - admin: Can ONLY get their own companies (current_user_id must match tb_user_id)
+        - user: Can ONLY get their own companies (current_user_id must match tb_user_id)
+        """
+        locale = request.headers.get('Accept-Language', 'en')
+        try:
+            # Get current user from Auth0 token
+            current_user = get_current_user()
+            if not current_user:
+                return error_response(
+                    message=get_message('user_not_found', locale),
+                    status_code=404
+                )
+            # Get query parameters
+            search = request.args.get('search', type=str)
+            status = request.args.get('status', type=str)
+            
+            # Call service to find companies for this user
+            result, status_code = kbai_companies_service.find_competitor_companies(
+                id_company=id_company,
+                search=search,
+                status=status
+            )
+            
+            if status_code == 200:
+                # Return direct data without double wrapping
+                return {
+                    'message': result['message'],
+                    'data': result['data'],
+                    'success': result['success']
+                }, status_code
+            else:
+                return error_response(
+                    message=get_message('user_companies_retrieve_failed', locale),
+                    data=result,
+                    status_code=status_code
+                )
+                
+        except Exception as e:
+            return internal_error_response(
+                message=get_message('internal_server_error', locale),
+                error=str(e)
+            )

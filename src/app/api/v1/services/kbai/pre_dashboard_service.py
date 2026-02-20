@@ -7,7 +7,8 @@ that track the progress of companies through various setup steps.
 
 import logging
 from typing import Dict, Any, Tuple
-from flask import current_app
+from flask import current_app, request
+from src.common.localization import get_message
 
 from src.app.database.models import KbaiPreDashboard, KbaiCompany
 
@@ -95,12 +96,13 @@ class KbaiPreDashboardService:
             Tuple of (response_data, status_code)
         """
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # Check if company exists
             company = KbaiCompany.findOne(id_company=company_id)
             if not company:
                 return {
                     'error': 'Not found',
-                    'message': 'Company not found'
+                    'message': get_message('company_not_found', locale)
                 }, 404
             
             # Get pre-dashboard record
@@ -110,9 +112,9 @@ class KbaiPreDashboardService:
                 # Pre-dashboard should have been created when company was created
                 # Return detailed diagnostic information to help identify the issue
                 error_details = {
-                    'error_type': 'Pre-dashboard record missing',
+                    'error_type': get_message('pre_dashboard_missing', locale),
                     'company_id': company_id,
-                    'message': 'Pre-dashboard record was not created during company creation',
+                    'message': get_message('pre_dashboard_not_created_msg', locale),
                     'possible_causes': [
                         'Pre-dashboard creation failed silently during company creation',
                         'Company was created before auto-creation logic was added',
@@ -137,7 +139,7 @@ class KbaiPreDashboardService:
                 
                 return {
                     'error': 'Not found',
-                    'message': 'Pre-dashboard record not found for this company',
+                    'message': get_message('pre_dashboard_not_found_msg', locale),
                     'details': error_details
                 }, 404
             
@@ -167,23 +169,24 @@ class KbaiPreDashboardService:
             
             pre_dashboard_data['step_status'] = {
                 'balance_sheet_count': balance_check['balance_sheet_count'],
-                'flag': balance_check['flag'],
-                'file_names': balance_check['file_names'],
-                'step_compare_enabled': balance_check['step_compare_enabled'],
-                'can_compare': balance_check['can_compare']
+                # 'flag': balance_check['flag'],
+                'file_names': balance_check['file_names']
+                # 'step_compare_enabled': balance_check['step_compare_enabled'],
+                # 'can_compare': balance_check['can_compare']
             }
             
             return {
-                'message': 'Pre-dashboard retrieved successfully',
+                'message': get_message('pre_dashboard_retrieved_success', locale),
                 'data': pre_dashboard_data,
                 'success': True
             }, 200
             
         except Exception as e:
+            locale = request.headers.get('Accept-Language', 'en')
             current_app.logger.error(f"Error retrieving pre-dashboard for company {company_id}: {str(e)}")
             return {
                 'error': 'Internal server error',
-                'message': 'Failed to retrieve pre-dashboard record'
+                'message': get_message('pre_dashboard_retrieve_failed', locale)
             }, 500
     
     # -----------------------------------------------------------------------
@@ -201,12 +204,13 @@ class KbaiPreDashboardService:
             Tuple of (response_data, status_code)
         """
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # Check if company exists
             company = KbaiCompany.findOne(id_company=company_id)
             if not company:
                 return {
                     'error': 'Not found',
-                    'message': 'Company not found'
+                    'message': get_message('company_not_found', locale)
                 }, 404
             
             # Get pre-dashboard record, create if it doesn't exist
@@ -227,7 +231,7 @@ class KbaiPreDashboardService:
                     current_app.logger.error(f"Failed to create pre-dashboard for company {company_id}: {error}")
                     return {
                         'error': 'Internal server error',
-                        'message': 'Failed to create pre-dashboard record'
+                        'message': get_message('pre_dashboard_create_failed', locale)
                     }, 500
             
             # Update pre-dashboard record
@@ -237,23 +241,24 @@ class KbaiPreDashboardService:
                 current_app.logger.error(f"Error updating pre-dashboard: {error}")
                 return {
                     'error': 'Internal server error',
-                    'message': 'Failed to update pre-dashboard record'
+                    'message': get_message('pre_dashboard_update_failed', locale)
                 }, 500
             
             # Get updated record
             updated_pre_dashboard = KbaiPreDashboard.findOne(id_company=company_id)
             
             return {
-                'message': 'Pre-dashboard updated successfully',
+                'message': get_message('pre_dashboard_updated_success', locale),
                 'data': updated_pre_dashboard.to_dict(),
                 'success': True
             }, 200
             
         except Exception as e:
+            locale = request.headers.get('Accept-Language', 'en')
             current_app.logger.error(f"Error updating pre-dashboard for company {company_id}: {str(e)}")
             return {
                 'error': 'Internal server error',
-                'message': 'Failed to update pre-dashboard record'
+                'message': get_message('pre_dashboard_update_failed', locale)
             }, 500
     
 

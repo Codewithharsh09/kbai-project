@@ -374,8 +374,10 @@ class UserTempData(Base):
     premium_licenses_2 = Column(SmallInteger)
     phone = Column(String(50))
     language = Column(String(10))
+    role = Column(String(64), default='user')  # Role for hierarchy filtering
     id_user = Column(BigInteger, ForeignKey('public.tb_user.id_user'), nullable=True)  # Direct creator (admin)
     companies = Column(ARRAY(Integer), nullable=True)  # Array of company IDs to assign
+    created_at = Column(DateTime, default=datetime.utcnow)  # For sorting
 
     # No relationships - UserTempData is temporary and deleted after first login
 
@@ -391,8 +393,10 @@ class UserTempData(Base):
             'premium_licenses_2': self.premium_licenses_2,
             'phone': self.phone,
             'language': self.language,
+            'role': self.role,
             'id_user': self.id_user,
             'companies': self.companies,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
     
     # --------------------------------------------------------------------------
@@ -410,8 +414,15 @@ class UserTempData(Base):
             Tuple of (temp_data_record, error_message)
         """
         try:
+            if not temp_data:
+                return None, "Temp data is None"
+
+            email = temp_data.get('email')
+            if not email:
+                return None, "Email is required"
+            
             # Check if temp data already exists
-            existing = cls.query.filter_by(email=temp_data['email']).first()
+            existing = cls.query.filter_by(email=email).first()
             
             if existing:
                 # Update existing record
@@ -423,6 +434,7 @@ class UserTempData(Base):
                 existing.premium_licenses_2 = temp_data.get('premium_licenses_2', existing.premium_licenses_2)
                 existing.phone = temp_data.get('phone', existing.phone)
                 existing.language = temp_data.get('language', existing.language)
+                existing.role = temp_data.get('role', existing.role)
                 existing.id_user = temp_data.get('id_user', existing.id_user)
                 existing.companies = temp_data.get('companies', existing.companies)
                 
@@ -431,7 +443,7 @@ class UserTempData(Base):
             else:
                 # Create new record
                 temp_record = cls(
-                    email=temp_data['email'],
+                    email=email,
                     name=temp_data.get('name'),
                     surname=temp_data.get('surname'),
                     company_name=temp_data.get('company_name'),
@@ -440,6 +452,7 @@ class UserTempData(Base):
                     premium_licenses_2=temp_data.get('premium_licenses_2', 0),
                     phone=temp_data.get('phone'),
                     language=temp_data.get('language', 'en'),
+                    role=temp_data.get('role', 'user'),
                     id_user=temp_data.get('id_user'),
                     companies=temp_data.get('companies')
                 )
@@ -521,6 +534,66 @@ class UserTempData(Base):
         except Exception as e:
             db.session.rollback()
             return False, f"Error deleting temp data: {str(e)}"
+    
+    # -------------------------------------------------------------------------
+    # Find temp users with pagination
+    # -------------------------------------------------------------------------
+    @classmethod
+    def find(cls, page: int = 1, per_page: int = 10, search: str = None, **filters) -> Tuple[List['UserTempData'], int, str]:
+        """
+        Find temp users with filtering and pagination
+        
+        Args:
+            page: Page number (1-based)
+            per_page: Items per page
+            search: Search term for email, name, or surname
+            **filters: Field filters like role='admin', id_user=1, etc.
+            
+        Returns:
+            Tuple of (temp_users_list, total_count, error_message)
+            
+        Examples:
+            UserTempData.find()  # Get all temp users
+            UserTempData.find(role='admin')
+            UserTempData.find(search='john')
+            UserTempData.find(id_user=5)  # All temp users created by admin with id=5
+        """
+        try:
+            query = cls.query
+            
+            # Apply standard filters (support IN when value is list/tuple/set)
+            for key, value in filters.items():
+                if hasattr(cls, key):
+                    column = getattr(cls, key)
+                    if isinstance(value, (list, tuple, set)):
+                        query = query.filter(column.in_(list(value)))
+                    else:
+                        query = query.filter(column == value)
+            
+            # Apply search filter
+            if search:
+                query = query.filter(
+                    or_(
+                        cls.email.ilike(f'%{search}%'),
+                        cls.name.ilike(f'%{search}%'),
+                        cls.surname.ilike(f'%{search}%')
+                    )
+                )
+            
+            # Sort by latest created first
+            query = query.order_by(desc(cls.created_at))
+            
+            # Get total count
+            total = query.count()
+            
+            # Get paginated results
+            offset = (page - 1) * per_page
+            temp_users = query.offset(offset).limit(per_page).all()
+            
+            return temp_users, total, None
+            
+        except Exception as e:
+            return [], 0, f"Error listing temp users: {str(e)}"
 
 
 __all__ = [

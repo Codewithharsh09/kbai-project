@@ -41,6 +41,8 @@ class KbaiCompany(Base):
     email = Column(String, nullable=True)
     website = Column(String, nullable=True)
     status_flag = Column(String, nullable=True,default="ACTIVE")
+    is_competitor = Column(Boolean, default=False)
+    parent_company_id = Column(BigInteger, ForeignKey('kbai.kbai_companies.id_company'), nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -76,6 +78,8 @@ class KbaiCompany(Base):
             'email': self.email,
             'website': self.website,
             'status_flag': self.status_flag,
+            'is_competitor': self.is_competitor,
+            'parent_company_id': self.parent_company_id,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'is_deleted': self.is_deleted,
@@ -111,6 +115,8 @@ class KbaiCompany(Base):
                 email=company_data.get('email'),
                 website=company_data.get('website'),
                 status_flag=company_data.get('status_flag', 'ACTIVE'),
+                is_competitor=bool(company_data.get('is_competitor', False)),
+                parent_company_id=company_data.get('parent_company_id'),
                 created_at=now,
                 updated_at=now,
                 is_deleted=False
@@ -120,20 +126,13 @@ class KbaiCompany(Base):
             db.session.commit()  # Get the company ID before committing
             
             # Auto-create pre_dashboard record for the new company using the create method
-            from .kbai_pre_dashboard import KbaiPreDashboard
-            
-            pre_dashboard, error = KbaiPreDashboard.create({
-                'id_company': company.id_company
-            })
-            if pre_dashboard is None or error:
-                # Log detailed error for debugging
-                logger = logging.getLogger(__name__)
-                logger.error(
-                    f"Failed to create pre-dashboard for company {company.id_company}: {error if error else 'Unknown error'}"
-                )
-                db.session.rollback()
-                return None, f"Failed to create pre-dashboard: {error if error else 'Unknown error'}"
-            
+            if not company_data.get('is_competitor', False):
+                from .kbai_pre_dashboard import KbaiPreDashboard
+                pre_dashboard, error = KbaiPreDashboard.create({
+                    'id_company': company.id_company
+                })
+                if error:
+                    return None, f"Error creating pre-dashboard: {error}"
             return company, None
             
         except SQLAlchemyError as e:
@@ -222,6 +221,8 @@ class KbaiCompany(Base):
                 self.website = update_data['website']
             if 'status_flag' in update_data:
                 self.status_flag = update_data['status_flag']
+            if 'is_competitor' in update_data:
+                self.is_competitor = update_data['is_competitor']
             
             # Update timestamp
             self.updated_at = datetime.utcnow()

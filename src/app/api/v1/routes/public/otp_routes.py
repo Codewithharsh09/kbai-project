@@ -14,6 +14,7 @@ from src.common.response_utils import (
     success_response, error_response, validation_error_response,
     internal_error_response, not_found_response
 )
+from src.common.localization import get_message
 from src.app.api.schemas.public.otp_schemas import (
     CreateOtpSchema,
     VerifyOtpSchema
@@ -68,6 +69,7 @@ class CreateOtp(Resource):
         Sends 6-digit OTP to user's email with 10-minute expiry.
         Response is immediate - OTP sending happens in background.
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Validate input data
             schema = CreateOtpSchema()
@@ -76,7 +78,7 @@ class CreateOtp(Resource):
             except ValidationError as err:
                 return validation_error_response(
                     validation_errors=err.messages,
-                    message="Input validation failed"
+                    message=get_message('input_validation_failed', locale)
                 )
 
             email = validated_data.get('email')
@@ -87,7 +89,7 @@ class CreateOtp(Resource):
             
             if user and user.status != 'ACTIVE':
                 return error_response(
-                    message='Your account is not active. Please contact support.',
+                    message=get_message('account_inactive', locale),
                     data={'error': 'Account inactive'},
                     status_code=403
                 )
@@ -101,19 +103,19 @@ class CreateOtp(Resource):
             
             # Return immediate success response
             return success_response(
-                message='OTP is being sent to your email',
+                message=get_message('otp_sending', locale),
                 data={
                     'email': email,
                     'expires_in_minutes': 10,
                     'success': True,
-                    'note': 'OTP will arrive shortly. Please check your email.'
+                    'note': get_message('otp_check_email', locale)
                 }
             )
 
         except Exception as e:
             current_app.logger.error(f"Create OTP error: {str(e)}")
             return internal_error_response(
-                message="Failed to create OTP",
+                message=get_message('otp_create_failed', locale),
                 error_details=str(e)
             )
 
@@ -130,6 +132,7 @@ class VerifyOtp(Resource):
         Verify OTP and complete 2-step verification.
         Returns user data and creates JWT token for session.
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Validate input data
             schema = VerifyOtpSchema()
@@ -138,7 +141,7 @@ class VerifyOtp(Resource):
             except ValidationError as err:
                 return validation_error_response(
                     validation_errors=err.messages,
-                    message="Input validation failed"
+                    message=get_message('input_validation_failed', locale)
                 )
 
             email = validated_data.get('email')
@@ -153,7 +156,7 @@ class VerifyOtp(Resource):
 
                 # Create standardized response with cookie
                 return success_response(
-                    message=response_data.get('message', 'OTP verified successfully'),
+                    message=get_message('otp_verified', locale),
                     data={
                         "user": user,
                         "two_factor_verified": True,
@@ -172,7 +175,7 @@ class VerifyOtp(Resource):
             # Handle error cases
             if status_code == 400:
                 return error_response(
-                    message=response_data.get('message', 'Invalid OTP'),
+                    message=get_message('otp_invalid', locale),
                     data=response_data,
                     status_code=400
                 )
@@ -180,16 +183,16 @@ class VerifyOtp(Resource):
                 # Security: Normalize 404 (User not found) to 400 to prevent user enumeration attacks
                 # Don't reveal to client whether email exists or OTP is invalid - return same error format
                 return error_response(
-                    message='Invalid or expired OTP. Please request a new one or use 123456 for development.',
+                    message=get_message('otp_invalid_expired', locale),
                     data={
-                        'error': 'Invalid OTP',
-                        'message': 'Invalid or expired OTP. Please request a new one or use 123456 for development.'
+                        'error': get_message('otp_invalid', locale),
+                        'message': get_message('otp_invalid_expired', locale)
                     },
                     status_code=400
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'OTP verification failed'),
+                    message=get_message('otp_verify_failed', locale),
                     data=response_data,
                     status_code=status_code
                 )
@@ -197,7 +200,7 @@ class VerifyOtp(Resource):
         except Exception as e:
             current_app.logger.error(f"Verify OTP error: {str(e)}")
             return internal_error_response(
-                message="Failed to verify OTP",
+                message=get_message('otp_verify_failed', locale),
                 error_details=str(e)
             )
 
@@ -214,6 +217,7 @@ class OtpCleanup(Resource):
         Clean up expired OTPs (Admin only).
         Removes all expired OTP records from database.
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user
             current_user_id = get_jwt_identity()
@@ -224,15 +228,17 @@ class OtpCleanup(Resource):
             # Clean up expired OTPs
             cleaned_count = otp_service.cleanup_expired_otps()
 
-            return {
-                'message': f'Cleaned up {cleaned_count} expired OTPs',
-                'cleaned_count': cleaned_count,
-                'success': True
-            }, 200
+            return success_response(
+                message=get_message('otp_cleanup_success', locale, count=cleaned_count),
+                data={
+                    'cleaned_count': cleaned_count,
+                    'success': True
+                }
+            )
 
         except Exception as e:
             current_app.logger.error(f"OTP cleanup error: {str(e)}")
-            return {
-                'error': 'Failed to cleanup OTPs',
-                'message': str(e)
-            }, 500
+            return internal_error_response(
+                message=get_message('otp_cleanup_failed', locale),
+                error_details=str(e)
+            )

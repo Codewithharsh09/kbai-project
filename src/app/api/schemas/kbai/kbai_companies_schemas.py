@@ -39,7 +39,7 @@ class CreateCompanySchema(Schema):
     )
     
     sdi = fields.String(
-        required=True,
+        allow_none=True,
         validate=validate.Length(max=50),
         error_messages={
             'invalid': 'SDI must be maximum 50 characters'
@@ -71,7 +71,7 @@ class CreateCompanySchema(Schema):
     )
     
     email = fields.Email(
-        required=True,
+        allow_none=True,
         validate=validate.Length(max=255),
         error_messages={
             'invalid': 'Email must be a valid email address and maximum 255 characters'
@@ -94,6 +94,42 @@ class CreateCompanySchema(Schema):
         }
     )
     
+    is_competitor = fields.Boolean(
+        error_messages={
+            'required': 'Is competitor is required'
+        }
+    )
+    
+    parent_company_id = fields.Integer(
+        allow_none=True,
+        error_messages={
+            'invalid': 'Parent company ID must be an integer'
+        }
+    )
+    
+    region = fields.String(
+        required=True,
+        validate=[
+            validate.Length(min=1, error='Region is required'),
+            validate.Length(max=255, error='Region must be maximum 255 characters')
+        ],
+        error_messages={
+            'required': 'Region is required',
+            'invalid': 'Region validation failed'
+        }
+    )
+    
+    ateco = fields.String(
+        required=True,
+        validate=[
+            validate.Length(min=1, error='Ateco code is required')
+        ],
+        error_messages={
+            'required': 'Ateco code is required',
+            'invalid': 'Ateco code must be between 2 and 6 characters'
+        }
+    )
+
     # Timestamp fields (read-only for create)
     created_at = fields.DateTime(dump_only=True, allow_none=True)
     updated_at = fields.DateTime(dump_only=True, allow_none=True)
@@ -188,6 +224,22 @@ class UpdateCompanySchema(Schema):
         }
     )
     
+    region = fields.String(
+        allow_none=True,
+        validate=validate.Length(max=255),
+        error_messages={
+            'invalid': 'Region must be maximum 255 characters'
+        }
+    )
+    
+    ateco = fields.String(
+        allow_none=True,
+        validate=validate.Length(max=6,min=2),
+        error_messages={
+            'invalid': 'Ateco code must be maximum 6 characters'
+        }
+    )
+    
     # Timestamp fields (read-only for update)
     created_at = fields.DateTime(dump_only=True, allow_none=True)
     updated_at = fields.DateTime(dump_only=True, allow_none=True)
@@ -213,6 +265,7 @@ class CompanyResponseSchema(Schema):
     email = fields.String(allow_none=True)
     website = fields.String(allow_none=True)
     status_flag = fields.String(allow_none=True)
+    parent_company_id = fields.Integer(allow_none=True)
     created_at = fields.DateTime(allow_none=True)
     updated_at = fields.DateTime(allow_none=True)
     is_deleted = fields.Boolean(allow_none=True)

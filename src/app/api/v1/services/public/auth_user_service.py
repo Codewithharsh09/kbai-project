@@ -15,8 +15,9 @@ License: MIT
 
 from typing import Dict, Tuple, Any
 from sqlalchemy import or_, func
-from flask import current_app
+from flask import current_app, request
 from marshmallow import ValidationError
+from src.common.localization import get_message
 
 from src.app.database.models import TbUser, UserTempData, TbUserCompany, KbaiCompany, TbOtp, LicenceAdmin
 from src.app.api.schemas.public.auth_schemas import (
@@ -66,6 +67,7 @@ class UserService:
         """
         user_role = current_user.role.lower()
         target_role = target_user.role.lower()
+        locale = request.headers.get('Accept-Language', 'en')
         
         # Superadmin has full access to everyone
         if user_role == 'superadmin':
@@ -74,20 +76,20 @@ class UserService:
         # Staff has full access EXCEPT to superadmin
         if user_role == 'staff':
             if target_role == 'superadmin':
-                return False, "Staff cannot manage superadmin users"
+                return False, get_message('hierarchy_staff_cannot_manage_superadmin', locale)
             return True, ""  # Can manage everyone else
         
         # User role has limited permissions
         if user_role == 'user':
             if action == 'list':
-                return False, "Users with role 'user' cannot list other users"
+                return False, get_message('hierarchy_user_cannot_action', locale, action=action)
             elif action in ['update', 'delete']:
                 # User can only act on themselves
                 if current_user.id_user != target_user.id_user:
-                    return False, f"Users with role 'user' can only {action} themselves"
+                    return False, get_message('hierarchy_user_action_self_only', locale, action=action)
                 return True, ""
             else:
-                return False, f"Users with role 'user' cannot {action} other users"
+                return False, get_message('hierarchy_user_cannot_action', locale, action=action)
         
         # Admin - can manage only users they directly created OR themselves
         if user_role == 'admin':
@@ -98,9 +100,9 @@ class UserService:
             elif target_user.id_admin == current_user.id_user:
                 return True, ""
             else:
-                return False, f"You can only {action} users you directly created or yourself"
+                return False, get_message('hierarchy_admin_action_created_only', locale, action=action)
         # Other roles (manager, etc.) - no permissions
-        return False, f"Role '{user_role}' does not have permission to {action} users"
+        return False, get_message('hierarchy_role_action_denied', locale, user_role=user_role, action=action)
     
     # ------------------------------------------------------------------------
     # Create a new role
@@ -141,26 +143,28 @@ class UserService:
             phone = validated_data.get('phone')
             companies = validated_data.get('companies', [])
             
+            locale = request.headers.get('Accept-Language', 'en')
+
             # Get current user for validation
             current_user = TbUser.findOne(id_user=current_user_id)
             if not current_user:
                 return {
                     'error': 'Current user not found',
-                    'message': 'Creator user does not exist'
+                    'message': get_message('creator_user_not_found', locale)
                 }, 404
             
             # Check unique constraints in both tb_user and user_temp_data
             if TbUser.findOne(email=email):
                 return {
                     'error': 'Email already exists',
-                    'message': f'User with email {email} already exists'
+                    'message': get_message('user_email_exists', locale, email=email)
                 }, 409
             
             # Check if email exists in temp data (pending user creation)
             if UserTempData.findOne(email=email):
                 return {
                     'error': 'Email already exists',
-                    'message': f'User with email {email} is already being processed'
+                    'message': get_message('user_email_processing', locale, email=email)
                 }, 409
             
             # # LICENSE VALIDATION: Updated flow based on role hierarchy
@@ -171,10 +175,6 @@ class UserService:
             if role.lower() in ['super_admin', 'superadmin']:
                 if number_licences > 0:
                     current_app.logger.warning(f"Cannot allocate licenses to superadmin role")
-                    # return {
-                    #     'error': 'Invalid license allocation',
-                    #     'message': 'Superadmin role cannot receive licenses. Licenses are only for admin roles.'
-                    # }, 400
                 # No license validation for superadmin
                 current_app.logger.info(f"Creating superadmin - no license validation required")
             
@@ -209,7 +209,7 @@ class UserService:
                     # Other roles (user, manager, etc.) cannot create admins
                     return {
                         'error': 'Permission denied',
-                        'message': f'Role "{current_user_role}" cannot create admin users'
+                        'message': get_message('role_cannot_create_admin', locale, role=current_user_role)
                     }, 403
             
             # # Rule 3: Non-admin roles cannot receive licenses
@@ -217,7 +217,7 @@ class UserService:
                 current_app.logger.warning(f"Cannot allocate licenses to non-admin role: {role}")
                 return {
                     'error': 'Invalid license allocation',
-                    'message': f'Cannot allocate licenses to role "{role}". Only admin role can receive licenses.'
+                    'message': get_message('license_allocation_admin_only', locale, role=role)
                 }, 400
             
             # Normalize role for Auth0 (admin -> admin, superadmin -> superadmin)
@@ -278,6 +278,7 @@ class UserService:
                 'company_name': company_name,
                 'phone': phone,
                 'language': language,
+                'role': role,  # Save role for hierarchy filtering
                 'id_user': current_user_id,
                 'companies': companies if companies else None
             }
@@ -291,7 +292,7 @@ class UserService:
             
             # Prepare response
             response_data = {
-                'message': 'User created successfully in Auth0',
+                'message': get_message('user_created_success', locale),
                 'data': {
                     'auth0_user_id': auth0_user_id,
                     'email': email,
@@ -324,6 +325,7 @@ class UserService:
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"Create user error: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
                 'error': 'Failed to create user',
                 'message': str(e)
@@ -335,6 +337,7 @@ class UserService:
     def find(self, **filters) -> Tuple[Dict[str, Any], int]:
         """
         Get paginated list of users with filtering and simplified hierarchy support.
+        Searches both TbUser and UserTempData tables.
         
         Hierarchy Rules:
         - superadmin: Sees ALL users in the system (no filter)
@@ -352,34 +355,41 @@ class UserService:
             
             # Build filter dict for model method
             model_filters = {}
+            temp_filters = {}  # Separate filters for UserTempData
+            
             if role_filter:
                 # Support comma-separated roles: role=staff,admin,user
                 if isinstance(role_filter, str) and ',' in role_filter:
                     parsed_roles = [r.strip().lower() for r in role_filter.split(',') if r.strip()]
                     if parsed_roles:
                         model_filters['role'] = parsed_roles
+                        temp_filters['role'] = parsed_roles
                 else:
                     model_filters['role'] = role_filter
+                    temp_filters['role'] = role_filter
             if status_filter:
                 model_filters['status'] = status_filter
+                # Note: UserTempData doesn't have status field, so we don't filter by it
             
             # Apply hierarchy filtering based on role
             excluded_roles = []
             included_roles = []
+            user_role = None
+            
             if current_user_id:
                 current_user = TbUser.findOne(id_user=current_user_id)
                 
                 if not current_user:
                     return {
                         'error': 'User not found',
-                        'message': 'Current user does not exist'
+                        'message': get_message('current_user_not_found', request.headers.get('Accept-Language', 'en'))
                     }, 404
                 
                 user_role = current_user.role.lower()
                 if user_role == 'user':
                     return {
                         'error': 'Permission denied',
-                        'message': 'Users with role "user" cannot list other users'
+                        'message': get_message('hierarchy_user_cannot_action', request.headers.get('Accept-Language', 'en'), action='list')
                     }, 403
 
                 # Superadmin: sees all users except itself
@@ -391,16 +401,22 @@ class UserService:
                     included_roles = ['admin', 'user']
                     model_filters['exclude_id_user'] = current_user_id  # will filter after fetch
                     model_filters['exclude_role'] = 'superadmin'  # will filter after fetch
+                    # For temp users, filter by role
+                    if not role_filter:  # Only set if not already filtered
+                        temp_filters['role'] = ['admin', 'user']
 
                 # Admin: can only see users they directly created
                 elif user_role == 'admin':
                     model_filters['id_admin'] = current_user_id
+                    temp_filters['id_user'] = current_user_id  # id_user in UserTempData is the creator
                     current_app.logger.info(f"Admin {current_user.email} (id={current_user_id}) listing their direct creations only")
             
-            # Use model CRUD method
-            users, total, error = TbUser.find(
-                page=page,
-                per_page=per_page,
+            # =================================================================
+            # QUERY TbUser TABLE
+            # =================================================================
+            users, tb_total, error = TbUser.find(
+                page=1,  # Get all matching records first for merging
+                per_page=1000,  # Large limit to get all users
                 search=search if search else None,
                 **{k: v for k, v in model_filters.items() if k not in ['exclude_id_user', 'exclude_role']}
             )
@@ -412,8 +428,28 @@ class UserService:
                     'message': error
                 }, 500
 
-            # Convert to dict and filter according to special rules for superadmin/staff
+            # =================================================================
+            # QUERY UserTempData TABLE
+            # =================================================================
+            temp_users, temp_total, temp_error = UserTempData.find(
+                page=1,  # Get all matching records first for merging
+                per_page=1000,  # Large limit to get all temp users
+                search=search if search else None,
+                **temp_filters
+            )
+            
+            if temp_error:
+                current_app.logger.warning(f"List temp users failed: {temp_error}")
+                # Continue with just TbUser results, don't fail the entire request
+                temp_users = []
+                temp_total = 0
+
+            # =================================================================
+            # MERGE AND FILTER RESULTS
+            # =================================================================
             users_data = []
+            
+            # Process TbUser records
             for user in users:
                 if current_user_id:
                     # Exclude itself for superadmin/staff
@@ -449,16 +485,38 @@ class UserService:
                     user_dict['number_licences'] = 0
                 
                 users_data.append(user_dict)
+            
+            # Process UserTempData records
+            for temp_user in temp_users:
+                # For staff: Exclude any superadmin and only include admin/user
+                if user_role == 'staff':
+                    if hasattr(temp_user, "role") and temp_user.role and temp_user.role.lower() == 'superadmin':
+                        continue
+                    if hasattr(temp_user, "role") and temp_user.role and temp_user.role.lower() not in included_roles:
+                        continue
+                
+                # Get temp user dict
+                temp_user_dict = temp_user.to_dict()                
+                users_data.append(temp_user_dict)
+            
+            # Sort combined results by created_at (latest first)
+            # Both models now provide ISO format or datetime objects, string sort works for ISO
+            users_data.sort(key=lambda x: x.get('created_at') or '', reverse=True)
+            
+            # Apply pagination to merged results
+            combined_total = len(users_data)
 
-            # If filtering excluded anyone, adjust total/total_pages accordingly
-            total_pages = (total + per_page - 1) // per_page 
-            filtered_total = total  
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            paginated_users = users_data[start_idx:end_idx]
+            
+            total_pages = (combined_total + per_page - 1) // per_page if combined_total > 0 else 0
             
             return {
                 'data': {
-                    'users': users_data,
+                    'users': paginated_users,
                     'pagination': {
-                        'total': filtered_total,
+                        'total': combined_total,
                         'page': page,
                         'per_page': per_page,
                         'total_pages': total_pages,
@@ -467,7 +525,7 @@ class UserService:
                     },
                 },
                 'success': True,
-                'message': 'Users fetched successfully.'
+                'message': get_message('users_fetched_success', request.headers.get('Accept-Language', 'en'))
             }, 200
             
         except Exception as e:
@@ -480,25 +538,62 @@ class UserService:
     # -----------------------------------------------------------------------------
     # USER DETAILS
     # -----------------------------------------------------------------------------
-    def findOne(self, user_id: int, current_user_id: int) -> Tuple[Dict[str, Any], int]:
+    def findOne(self, user_id: int, current_user_id: int, email_id: str = None) -> Tuple[Dict[str, Any], int]:
         """
         Get user details by ID with license count for admins.
+        If user not found in TbUser, searches UserTempData by email_id.
+        
+        Args:
+            user_id: ID of the user to find (for TbUser)
+            current_user_id: ID of the requesting user
+            email_id: Optional email to search in UserTempData if user not found in TbUser
         
         Returns:
             - User details
             - number_licences: Total licenses assigned (only for admin/superadmin roles)
         """
-        try:
-            target_user = TbUser.findOne(id_user=user_id)
+        try:  
+            if email_id:
+                temp_user_result = UserTempData.findOne(email=email_id)
+                locale = request.headers.get('Accept-Language', 'en')
+                if not temp_user_result:
+                    return {
+                        'success': False,
+                        'message': get_message('user_not_found', locale)
+                    }, 404
+                if temp_user_result:
+                    # Handle tuple result from findOne with select
+                    if hasattr(temp_user_result, 'to_dict'):
+                        temp_user = temp_user_result
+                    else:
+                        # It's a tuple/Row, get the first element
+                        temp_user = temp_user_result[0] if temp_user_result else None
+                
+                    if temp_user:
+                        # Return basic temp user data without license/company calculations
+                        user_data = temp_user.to_dict()
+                        user_data['number_licences'] = temp_user.number_licences or 0
+                        
+                        current_app.logger.info(f"Temp user found: {email_id}")
+                            
+                        return {
+                                'message': get_message('user_details_success', locale),
+                                'data': {'user': user_data},
+                                'success': True
+                            }, 200
             
+            target_user = TbUser.findOne(id_user=user_id)  
+           
+            locale = request.headers.get('Accept-Language', 'en')
             if not target_user:
+                # User not found in either table
                 return {
                     'success': False,
                     'error': 'User not found',
-                    'message': 'User does not exist'
+                    'message': get_message('user_does_not_exist', locale)
                 }, 404
             
-            # Get user dict
+            # Get user dict from TbUser
             user_data = target_user.to_dict()
             
             # Calculate number_licences for admin/superadmin users
@@ -559,6 +654,7 @@ class UserService:
             
         except Exception as e:
             current_app.logger.error(f"Get user detail error: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
                 'success': False,
                 'error': 'Failed to get user details',
@@ -585,13 +681,14 @@ class UserService:
           - Increased count: create new licenses (with parent validation if needed)
         """
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # Get current user
             current_user = TbUser.findOne(id_user=current_user_id)
             if not current_user:
                 return {
                     'success': False,
                     'error': 'User not found',
-                    'message': 'Current user does not exist'
+                    'message': get_message('current_user_not_found', locale)
                 }, 404
             
             # Get target user
@@ -600,7 +697,7 @@ class UserService:
                 return {
                     'success': False,
                     'error': 'User not found',
-                    'message': 'User does not exist'
+                    'message': get_message('user_does_not_exist', locale)
                 }, 404
             
             # Check hierarchy permissions using helper function
@@ -699,7 +796,7 @@ class UserService:
             
             # Prepare response
             response_data = {
-                'message': 'User updated successfully',
+                'message': get_message('user_updated_success', locale),
                 'data': target_user.to_dict(),
                 'success': True
             }
@@ -737,13 +834,14 @@ class UserService:
         - user role: Cannot delete anyone (403 error)
         """
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # Get current user
             current_user = TbUser.findOne(id_user=current_user_id)
             if not current_user:
                 return {
                     'success': False,
                     'error': 'User not found',
-                    'message': 'Current user does not exist'
+                    'message': get_message('current_user_not_found', locale)
                 }, 404
             
             # Get target user
@@ -752,14 +850,14 @@ class UserService:
                 return {
                     'success': False,
                     'error': 'User not found',
-                    'message': 'User does not exist'
+                    'message': get_message('user_does_not_exist', locale)
                 }, 404
             
             # Prevent self-deletion
             if current_user_id == user_id:
                 return {
-                    'error': 'Self-deletion not allowed',
-                    'message': 'You cannot delete your own account'
+                    'error': get_message('self_deletion_not_allowed', locale),
+                    'message': get_message('cannot_delete_own_account', locale)
                 }, 403
             
             # Check hierarchy permissions using helper function
@@ -780,7 +878,7 @@ class UserService:
                 current_app.logger.info(f"User already inactive (idempotent delete): {target_user.email}")
                 return {
                     'success': True,
-                    'message': 'User deleted successfully',
+                    'message': get_message('user_deleted_success', locale),
                     'data': {
                         'id_user': target_user.id_user,
                         'status': target_user.status
@@ -805,7 +903,7 @@ class UserService:
             
             return {
                 'success': True,
-                'message': 'User deleted successfully',
+                'message': get_message('user_deleted_success', locale),
                 'data': {
                     'id_user': cached_id,
                     'status': 'DELETE'
@@ -834,13 +932,14 @@ class UserService:
         - user role: Cannot delete anyone (403 error)
         """
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             # Get current user
             current_user = TbUser.findOne(id_user=current_user_id)
             if not current_user:
                 return {
                     'success': False,
                     'error': 'User not found',
-                    'message': 'Current user does not exist'
+                    'message': get_message('current_user_not_found', locale)
                 }, 404
             
             # Get target user
@@ -849,15 +948,15 @@ class UserService:
                 return {
                     'success': False,
                     'error': 'User not found',
-                    'message': 'User does not exist'
+                    'message': get_message('user_does_not_exist', locale)
                 }, 404
             
             # Prevent self-deletion
             if current_user_id == user_id:
                 return {
                     'success': False,
-                    'error': 'Self-deletion not allowed',
-                    'message': 'You cannot delete yourself'
+                    'error': get_message('self_deletion_not_allowed', locale),
+                    'message': get_message('cannot_delete_yourself', locale)
                 }, 403
             
             # Check permissions (same as soft delete)
@@ -873,7 +972,7 @@ class UserService:
                     return {
                         'success': False,
                         'error': 'Permission denied',
-                        'message': 'Staff cannot delete superadmin users'
+                        'message': get_message('hierarchy_staff_cannot_delete_superadmin', locale)
                     }, 403
             # Admin can only delete users they created
             elif user_role == 'admin':
@@ -881,14 +980,14 @@ class UserService:
                     return {
                         'success': False,
                         'error': 'Permission denied',
-                        'message': 'You can only delete users you created'
+                        'message': get_message('hierarchy_admin_delete_created_only', locale)
                     }, 403
             # User role cannot delete anyone
             else:
                 return {
                     'success': False,
                     'error': 'Permission denied',
-                    'message': 'Users with role "user" cannot delete other users'
+                    'message': get_message('hierarchy_user_cannot_delete_others', locale)
                 }, 403
             
             # Hard delete user and all related data
@@ -917,7 +1016,7 @@ class UserService:
                 
                 return {
                     'success': True,
-                    'message': 'User permanently deleted successfully',
+                    'message': get_message('user_permanently_deleted_success', locale),
                     'data': {
                         'deleted_user_id': deleted_user_id,
                         'deleted_user_email': deleted_user_email
@@ -948,12 +1047,13 @@ class UserService:
     def change_user_password(self, user_id: int, password_data: Dict[str, Any], current_user_id: int) -> Tuple[Dict[str, Any], int]:
         """Change user password"""
         try:
+            locale = request.headers.get('Accept-Language', 'en')
             target_user = TbUser.findOne(id_user=user_id)
             
             if not target_user:
                 return {
                     'error': 'User not found',
-                    'message': 'User does not exist'
+                    'message': get_message('user_does_not_exist', locale)
                 }, 404
             
             # Validate request data
@@ -970,20 +1070,21 @@ class UserService:
             
             if not success:
                 return {
-                    'error': 'Password change failed',
+                    'error': get_message('password_change_failed_msg', locale),
                     'message': error
                 }, 500
             
             current_app.logger.info(f"Password changed for user: {target_user.email}")
             
             return {
-                'message': 'Password changed successfully',
+                'message': get_message('password_changed_success', locale),
                 'success': True
             }, 200
             
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"Change password error: {str(e)}")
+            locale = request.headers.get('Accept-Language', 'en')
             return {
                 'error': 'Failed to change password',
                 'message': str(e)

@@ -13,6 +13,7 @@ from src.app.database.models import TbUserCompany
 from src.common.response_utils import (
     success_response, error_response, internal_error_response
 )
+from src.common.localization import get_message
 from src.app.api.v1.swaggers import (
     balance_sheet_ns,
     upload_parser,
@@ -89,26 +90,27 @@ class BalanceSheet(Resource):
         try:
             # Get current user from Auth0 token (set by @require_auth0 decorator)
             current_user = get_current_user()
+            locale = request.headers.get('Accept-Language', 'en')
             
             # This check should not be needed as @require_auth0 already handles it
             # But keeping as safety check
             if not current_user:
                 return error_response(
-                    message="Authentication required",
+                    message=get_message('authentication_required', locale),
                     status_code=401
                 )
             
             # Validate company_id
             if not company_id or company_id <= 0:
                 return error_response(
-                    message="Valid company_id is required",
+                    message=get_message('company_id_required', locale),
                     status_code=400
                 )
             
             # Get file and form data
             if 'file' not in request.files:
                 return error_response(
-                    message="File is required",
+                    message=get_message('file_required', locale),
                     status_code=400
                 )
             
@@ -126,20 +128,20 @@ class BalanceSheet(Resource):
             # Validate required fields
             if not year:
                 return error_response(
-                    message="Year is required",
+                    message=get_message('year_required', locale),
                     status_code=400
                 )
 
             
             if not type:
                 return error_response(
-                    message="Type is required",
+                    message=get_message('type_required', locale),
                     status_code=400
                 )
             
             if not mode:
                 return error_response(
-                    message="Mode is required",
+                    message=get_message('mode_required', locale),
                     status_code=400
                 )
             
@@ -165,7 +167,7 @@ class BalanceSheet(Resource):
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to upload balance'),
+                    message=response_data.get('message', get_message('balance_upload_failed', locale)),
                     data=response_data,
                     status_code=status_code
                 )
@@ -173,7 +175,7 @@ class BalanceSheet(Resource):
         except Exception as e:
             current_app.logger.error(f"Balance sheet upload error: {str(e)}")
             return internal_error_response(
-                message="Failed to upload balance sheet",
+                message=get_message('balance_upload_failed', locale),
                 error_details=str(e)
             )
 
@@ -222,10 +224,11 @@ class BalanceSheetsByCompany(Resource):
         try:
             # Get current user from Auth0 token (set by @require_auth0 decorator)
             current_user = get_current_user()
+            locale = request.headers.get('Accept-Language', 'en')
             
             if not current_user:
                 return error_response(
-                    message="Authentication required",
+                    message=get_message('authentication_required', locale),
                     status_code=401
                 )
             
@@ -261,7 +264,7 @@ class BalanceSheetsByCompany(Resource):
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to retrieve balance sheets'),
+                    message=response_data.get('message', get_message('balances_retrieve_failed', locale)),
                     data=response_data,
                     status_code=status_code
                 )
@@ -269,7 +272,7 @@ class BalanceSheetsByCompany(Resource):
         except Exception as e:
             current_app.logger.error(f"Get balance sheets by company error: {str(e)}")
             return internal_error_response(
-                message="Failed to retrieve balance sheets",
+                message=get_message('balances_retrieve_failed', locale),
                 error_details=str(e)
             )
 
@@ -309,10 +312,11 @@ class BalanceSheetDetail(Resource):
         try:
             # Get current user from Auth0 token (set by @require_auth0 decorator)
             current_user = get_current_user()
+            locale = request.headers.get('Accept-Language', 'en')
             
             if not current_user:
                 return error_response(
-                    message="Authentication required",
+                    message=get_message('authentication_required', locale),
                     status_code=401
                 )
             
@@ -331,7 +335,7 @@ class BalanceSheetDetail(Resource):
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to retrieve balance sheet'),
+                    message=response_data.get('message', get_message('balance_retrieve_failed', locale)),
                     data=response_data,
                     status_code=status_code
                 )
@@ -339,7 +343,7 @@ class BalanceSheetDetail(Resource):
         except Exception as e:
             current_app.logger.error(f"Get balance sheet by ID error: {str(e)}")
             return internal_error_response(
-                message="Failed to retrieve balance sheet",
+                message=get_message('balance_retrieve_failed', locale),
                 error_details=str(e)
             )
     
@@ -372,17 +376,18 @@ class BalanceSheetDetail(Resource):
         try:
             # Get current user from Auth0 token (set by @require_auth0 decorator)
             current_user = get_current_user()
+            locale = request.headers.get('Accept-Language', 'en')
             
             if not current_user:
                 return error_response(
-                    message="Authentication required",
+                    message=get_message('authentication_required', locale),
                     status_code=401
                 )
             
             # Validate id_balance
             if not id_balance or id_balance <= 0:
                 return error_response(
-                    message="Valid id_balance is required",
+                    message=get_message('balance_id_required', locale),
                     status_code=400
                 )
             
@@ -401,7 +406,7 @@ class BalanceSheetDetail(Resource):
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to delete balance sheet'),
+                    message=response_data.get('message', get_message('balance_delete_failed', locale)),
                     data=response_data,
                     status_code=status_code
                 )
@@ -409,7 +414,6 @@ class BalanceSheetDetail(Resource):
         except Exception as e:
             current_app.logger.error(f"Balance sheet delete error: {str(e)}")
             return internal_error_response(
-                message="Failed to delete balance sheet",
+                message=get_message('balance_delete_failed', locale),
                 error_details=str(e)
             )
-

@@ -17,7 +17,7 @@ from flask import request, current_app
 from flask_restx import Resource
 from marshmallow import ValidationError
 from src.common.logger import api_logger
-from src.app.database.models import TbUser
+from src.app.database.models import TbUser, UserTempData
 from src.app.api.v1.services import auth0_service, user_service
 from src.common.response_utils import (
     success_response,
@@ -44,6 +44,7 @@ from src.app.api.middleware import (
 )
 from src.app.api.v1.routes.public.otp_routes import send_otp_in_background
 from src.app.api.v1.services.public.license_service import LicenseManager
+from src.common.localization import get_message
 
 
 # -------------------------------------------------------------------------
@@ -71,15 +72,15 @@ class LicenseStats(Resource):
         - total_licenses
         - used_by_companies
         - available
-        - can_transfer
+
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             current_user = get_current_user()
-            
             # Only admins should see license stats; others get 403.
             if not current_user or current_user.role.lower() != "admin":
                 return error_response(
-                    message="Only admin users can access license statistics",
+                    message=get_message('license_stats_admin_only', locale),
                     data={"role": getattr(current_user, "role", None)},
                     status_code=403,
                 )
@@ -89,13 +90,13 @@ class LicenseStats(Resource):
             # If calculation returned an error, surface it with 500.
             if "error" in stats:
                 return error_response(
-                    message="Failed to calculate license statistics",
+                    message=get_message('license_stats_failed', locale),
                     data=stats,
                     status_code=500,
                 )
 
             return success_response(
-                message="License statistics retrieved successfully",
+                message=get_message('license_stats_success', locale),
                 data=stats,
                 status_code=200,
             )
@@ -103,7 +104,7 @@ class LicenseStats(Resource):
         except Exception as e:
             current_app.logger.error(f"Get license stats error: {str(e)}")
             return internal_error_response(
-                message="Failed to retrieve license statistics",
+                message=get_message('license_stats_error', locale),
                 error_details=str(e),
             )
 
@@ -115,6 +116,7 @@ class LicenseStats(Resource):
 class Auth0Logout(Resource):
     def post(self):
         """Logout user and clear session"""
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # In a real implementation, you would:
             # 1. Blacklist the JWT token
@@ -123,7 +125,7 @@ class Auth0Logout(Resource):
             
             # Clear the HTTP-only cookie
             return success_response(
-                message="Logout successful",
+                message=get_message('logout_success', locale),
                 data={},
                 set_cookie={
                     'key': 'auth_token',
@@ -139,7 +141,7 @@ class Auth0Logout(Resource):
         except Exception as e:
             current_app.logger.error(f"Logout error: {str(e)}")
             return internal_error_response(
-                message="Logout failed",
+                message=get_message('logout_failed', locale),
                 error_details=str(e)
             )
 
@@ -170,21 +172,23 @@ class Auth0Verify(Resource):
         This endpoint is used by frontend to verify Auth0 tokens
         obtained via SDK or password-realm login.
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get JSON data
             data = request.get_json()
             if not data:
                 return error_response(
-                    message="Request data is required",
+                    message=get_message('missing_data', locale),
                     data={"required_field": "access_token"},
                     status_code=400
                 )
 
             access_token = data.get('access_token')
+            is_mfa_verified = data.get('is_mfa_verified', False)
 
             if not access_token:
                 return error_response(
-                    message="Please provide the access token to continue.",
+                    message=get_message('missing_token', locale),
                     data={"required_field": "access_token"},
                     status_code=400
                 )
@@ -196,7 +200,7 @@ class Auth0Verify(Resource):
             except Exception as e:
                 current_app.logger.error(f"Token verification failed: {str(e)}")
                 return unauthorized_response(
-                    message="We could not verify your login. Please make sure you are logged in with a valid account and try again.",
+                    message=get_message('verify_unauthorized', locale),
                     reason="invalid_token"
                 )
 
@@ -208,7 +212,7 @@ class Auth0Verify(Resource):
 
             if not auth0_user_id or not email:
                 return unauthorized_response(
-                    message="Token does not contain required user information",
+                    message=get_message('missing_claims', locale),
                     reason="missing_claims"
                 )
 
@@ -226,6 +230,21 @@ class Auth0Verify(Resource):
                 elif claims.get('app_metadata', {}).get('role'):
                     role = claims.get('app_metadata', {}).get('role', 'USER')
                     current_app.logger.info(f"Role extracted from app_metadata: {role}")
+                                    # Final fallback: Fetch roles directly from Auth0 Management API
+                else:
+                    current_app.logger.info(
+                        f'roles_claim and app_metadata empty, fetching roles from Auth0 API for user: {auth0_user_id}'
+                    )
+                    auth0_roles = auth0_service.get_user_roles_from_auth0(auth0_user_id)
+                    if auth0_roles and len(auth0_roles) > 0:
+                        role = auth0_roles[
+                            0
+                        ].upper()  # Get first role and normalize to uppercase
+                        current_app.logger.info(f'Role extracted from Auth0 API: {role}')
+                    else:
+                        current_app.logger.warning(
+                            f'No roles found for user {auth0_user_id} in Auth0, defaulting to USER'
+                        )
 
                 # Use Auth0 service to sync user
                 user = auth0_service.get_or_create_user_from_auth0(
@@ -242,7 +261,7 @@ class Auth0Verify(Resource):
                 db.session.rollback()
                 current_app.logger.error(f"User sync failed: {str(e)}")
                 return internal_error_response(
-                    message="User synchronization failed",
+                    message=get_message('sync_failed', locale),
                     error_details=str(e)
                 )
             
@@ -251,17 +270,18 @@ class Auth0Verify(Resource):
                 current_app.logger.warning(f"User login blocked due to status: {user.status} for email: {email}")
                 
                 # Return appropriate error message based on status
-                status_messages = {
-                    'INACTIVE': 'Your account is inactive. Please contact support to activate your account.',
-                    'SUSPENDED': 'Your account has been suspended. Please contact support for assistance.',
-                    'BLOCKED': 'Your account has been blocked. Please contact support.',
-                    'PENDING': 'Your account is pending approval. Please wait for admin approval.'
+                status_key_map = {
+                    'INACTIVE': 'account_inactive',
+                    'SUSPENDED': 'account_suspended',
+                    'BLOCKED': 'account_blocked',
+                    'PENDING': 'account_pending'
                 }
                 
-                error_message = status_messages.get(
-                    user.status.upper(), 
-                    f'Your account status is {user.status}. Please contact support.'
-                )
+                status_upper = user.status.upper()
+                if status_upper in status_key_map:
+                    error_message = get_message(status_key_map[status_upper], locale)
+                else:
+                    error_message = get_message('account_status_error', locale, status=user.status)
                 
                 return error_response(
                     message=error_message,
@@ -274,7 +294,7 @@ class Auth0Verify(Resource):
                 )
             
             # Send OTP ONLY if MFA is enabled
-            if user.mfa:
+            if user.mfa and not is_mfa_verified:
                 current_app.logger.info(f"MFA enabled for user {email}, sending OTP")
                 send_otp_in_background(
                     app=current_app._get_current_object(),
@@ -286,17 +306,17 @@ class Auth0Verify(Resource):
             
             # Return user data immediately (OTP will be sent in background if MFA enabled)
             return success_response(
-                message="Token verified successfully",
+                message=get_message('verify_success', locale),
                 data={
                     "mfa": user.mfa,
-                    "user": user.to_dict() if not user.mfa else None
+                    "user": user.to_dict() if not user.mfa or is_mfa_verified else None
                 }
             )
 
         except Exception as e:
             current_app.logger.error(f"Auth0 verify error: {str(e)}")
             return internal_error_response(
-                message="Token verification failed",
+                message=get_message('verify_failed', locale),
                 error_details=str(e)
             )
 
@@ -409,6 +429,7 @@ class UsersCollection(Resource):
         - role: Filter by role (superadmin, admin, staff, user)
         - status: Filter by status (ACTIVE, INACTIVE, SUSPENDED)
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
@@ -431,20 +452,20 @@ class UsersCollection(Resource):
             # Return consistent response
             if status_code == 200:
                 return success_response(
-                    message=response_data.get('message', 'Users retrieved successfully'),
+                    message=get_message('user_list_success', locale),
                     data=response_data.get('data', {}),
                     status_code=status_code
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to retrieve users'),
+                    message=get_message('user_list_failed', locale),
                     data=response_data,
                     status_code=status_code
                 )
         except Exception as e:
             current_app.logger.error(f"List users error: {str(e)}")
             return internal_error_response(
-                message="Failed to retrieve users",
+                message=get_message('user_list_failed', locale),
                 error_details=str(e)
             )
 
@@ -471,7 +492,9 @@ class UsersCollection(Resource):
         - admin: Can create admin, user
         - user: Cannot create anyone
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
+            print("Hello")
             # Get authenticated user
             current_user = get_current_user()
             
@@ -482,7 +505,7 @@ class UsersCollection(Resource):
             except ValidationError as err:
                 return validation_error_response(
                     validation_errors=err.messages,
-                    message="Input validation failed"
+                    message=get_message('input_validation_failed', locale)
                 )
             
             # Call service layer
@@ -494,13 +517,13 @@ class UsersCollection(Resource):
             # Return response
             if status_code == 201:
                 return success_response(
-                    message=response_data['message'],
+                    message=get_message('user_create_success', locale),
                     data=response_data['data'],
                     status_code=status_code
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to create user'),
+                    message=get_message('user_create_failed', locale),
                     data=response_data,
                     status_code=status_code
                 )
@@ -508,7 +531,7 @@ class UsersCollection(Resource):
         except Exception as e:
             current_app.logger.error(f"Create user error: {str(e)}")
             return internal_error_response(
-                message="Failed to create user",
+                message=get_message('user_create_failed', locale),
                 error_details=str(e)
             )
 
@@ -545,6 +568,7 @@ class UserResource(Resource):
         - User tries to delete anyone ✗ (403)
         - Anyone tries to delete themselves ✗ (403 - self-deletion not allowed)
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
@@ -555,20 +579,20 @@ class UserResource(Resource):
             # Return consistent response
             if status_code == 200:
                 return success_response(
-                    message=response_data.get('message', 'User deleted successfully'),
+                    message=get_message('user_delete_success', locale),
                     data=response_data.get('data', {}),
                     status_code=status_code
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to delete user'),
+                    message=get_message('user_delete_failed', locale),
                     data=response_data,
                     status_code=status_code
                 )
         except Exception as e:
             current_app.logger.error(f"Delete user error: {str(e)}")
             return internal_error_response(
-                message="Failed to delete user",
+                message=get_message('user_delete_failed', locale),
                 error_details=str(e)
             )
 
@@ -584,34 +608,44 @@ class UserResource(Resource):
         - Auth0 token required (@require_auth0)
         - Permission check (@require_permission)
         
+        Query Parameters:
+        - email_id: Optional email to search in UserTempData if user not found in TbUser
+        
         Permissions:
         - superadmin, staff, admin: Can read any user
         - user: Cannot read (403)
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
             
+            # Get optional email_id query parameter for UserTempData lookup
+            email_id = request.args.get('email_id', None, type=str)
             # Call service layer for business logic
-            response_data, status_code = user_service.findOne(user_id, current_user.id_user)
+            response_data, status_code = user_service.findOne(
+                user_id, 
+                current_user.id_user,
+                email_id=email_id
+            )
             
             # Return consistent response
             if status_code == 200:
                 return success_response(
-                    message=response_data.get('message', 'User retrieved successfully'),
+                    message=get_message('user_get_success', locale),
                     data=response_data.get('data', {}),
                     status_code=status_code
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to retrieve user'),
+                    message=get_message('user_get_failed', locale),
                     data=response_data,
                     status_code=status_code
                 )
         except Exception as e:
             current_app.logger.error(f"Get user error: {str(e)}")
             return internal_error_response(
-                message="Failed to retrieve user",
+                message=get_message('user_get_failed', locale),
                 error_details=str(e)
             )
 
@@ -640,6 +674,7 @@ class UserResource(Resource):
         - Admin A tries to update user created by admin B ✗ (403)
         - User tries to update another user ✗ (403)
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
@@ -657,20 +692,20 @@ class UserResource(Resource):
             # Return consistent response
             if status_code == 200:
                 return success_response(
-                    message=response_data.get('message', 'User updated successfully'),
+                    message=get_message('user_update_success', locale),
                     data=response_data.get('data', {}),
                     status_code=status_code
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to update user'),
+                    message=get_message('user_update_failed', locale),
                     data=response_data,
                     status_code=status_code
                 )
         except Exception as e:
             current_app.logger.error(f"Update user error: {str(e)}")
             return internal_error_response(
-                message="Failed to update user",
+                message=get_message('user_update_failed', locale),
                 error_details=str(e)
             )
 
@@ -710,6 +745,7 @@ class HardDeleteUserResource(Resource):
         
         WARNING: This action is irreversible and will delete all user data!
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
@@ -720,20 +756,20 @@ class HardDeleteUserResource(Resource):
             # Return consistent response
             if status_code == 200:
                 return success_response(
-                    message=response_data.get('message', 'User permanently deleted successfully'),
+                    message=get_message('user_hard_delete_success', locale),
                     data=response_data.get('data', {}),
                     status_code=status_code
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to permanently delete user'),
+                    message=get_message('user_hard_delete_failed', locale),
                     data=response_data,
                     status_code=status_code
                 )
         except Exception as e:
             current_app.logger.error(f"Hard delete user error: {str(e)}")
             return internal_error_response(
-                message="Failed to permanently delete user",
+                message=get_message('user_hard_delete_failed', locale),
                 error_details=str(e)
             )
 
@@ -757,6 +793,7 @@ class ChangeUserPassword(Resource):
         - superadmin, staff, admin: Can change any user's password
         - user: Cannot change password (403)
         """
+        locale = request.headers.get('Accept-Language', 'en')
         try:
             # Get current user from Auth0 token
             current_user = get_current_user()
@@ -770,21 +807,147 @@ class ChangeUserPassword(Resource):
             # Return consistent response
             if status_code == 200:
                 return success_response(
-                    message=response_data.get('message', 'Password changed successfully'),
+                    message=get_message('user_password_change_success', locale),
                     data=response_data.get('data', {}),
                     status_code=status_code
                 )
             else:
                 return error_response(
-                    message=response_data.get('message', 'Failed to change password'),
+                    message=get_message('user_password_change_failed', locale),
                     data=response_data,
                     status_code=status_code
                 )
         except Exception as e:
             current_app.logger.error(f"Change password error: {str(e)}")
             return internal_error_response(
-                message="Failed to change password",
+                message=get_message('user_password_change_failed', locale),
                 error_details=str(e)
             )
-    
-    
+
+
+# =============================================================================
+# Temp User Resource - Update and Delete temp users by email
+# =============================================================================
+@auth_ns.route('/users/temp/<string:email_id>')
+class TempUserResource(Resource):
+    def options(self, email_id):
+        """Handle CORS preflight request"""
+        return '', 200
+
+    @auth_ns.doc('update_temp_user')
+    @auth_ns.expect(update_user_model)
+    @require_auth0
+    @require_permission('users:update')
+    def put(self, email_id):
+        """
+        Update temp user information by email.
+        
+        Authentication:
+        - Auth0 token required (@require_auth0)
+        - Permission check (@require_permission)
+        
+        Permissions:
+        - superadmin, staff, admin: Can update temp users
+        - user: Cannot update (403)
+        
+        Path Parameters:
+        - email_id: Email of the temp user to update
+        """
+        locale = request.headers.get('Accept-Language', 'en')
+        try:
+            # Get current user from Auth0 token
+            current_user = get_current_user()
+
+            # Get request data
+            update_data = request.get_json() or {}
+
+            # Get email from path parameter
+            email = email_id
+            
+            # Ensure email and updated by user is in update_data for create_or_update
+            update_data['email'] = email
+            update_data['id_user'] = current_user.id_user
+            
+            # Call model method for business logic
+            temp_record, error = UserTempData.create_or_update(update_data)
+
+            # Return consistent response
+            if temp_record:
+                return success_response(
+                    message=get_message('temp_user_update_success', locale),
+                    data={'user': temp_record.to_dict()},
+                    status_code=200
+                )
+            else:
+                return error_response(
+                    message=get_message('temp_user_update_failed', locale),
+                    data={'error': error},
+                    status_code=400
+                )
+        except Exception as e:
+            current_app.logger.error(f"Update temp user error: {str(e)}")
+            return internal_error_response(
+                message=get_message('temp_user_update_failed', locale),
+                error_details=str(e)
+            )
+
+    @auth_ns.doc('delete_temp_user')
+    @require_auth0
+    @require_permission('users:delete')
+    def delete(self, email_id):
+        """
+        Delete temp user by email (hard delete).
+        
+        Authentication:
+        - Auth0 token required (@require_auth0)
+        - Permission check (@require_permission)
+        
+        Permissions:
+        - superadmin, staff, admin: Can delete temp users
+        - user: Cannot delete (403)
+        
+        Path Parameters:
+        - email_id: Email of the temp user to delete
+        
+        WARNING: This action is irreversible!
+        """
+        locale = request.headers.get('Accept-Language', 'en')
+        try:
+            # Get current user from Auth0 token
+            current_user = get_current_user()
+
+            # Get email from path parameter
+            email = email_id
+                
+            # Find temp user by email
+            temp_user = UserTempData.query.filter_by(email=email).first()
+            
+            if not temp_user:
+                return error_response(
+                    message=get_message('temp_user_not_found', locale),
+                    data={'email': email},
+                    status_code=404
+                )
+                
+            # Delete the temp user
+            success, error = temp_user.delete()
+
+            # Return consistent response
+            if success:
+                return success_response(
+                    message=get_message('temp_user_delete_success', locale),
+                    data={'email': email},
+                    status_code=200
+                )
+            else:
+                return error_response(
+                    message=get_message('temp_user_delete_failed', locale),
+                    data={'error': error},
+                    status_code=400
+                )
+        except Exception as e:
+            current_app.logger.error(f"Delete temp user error: {str(e)}")
+            return internal_error_response(
+                message=get_message('temp_user_delete_failed', locale),
+                error_details=str(e)
+            )
